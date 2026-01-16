@@ -1,402 +1,271 @@
 import 'package:flutter/material.dart';
 import '../theme/design_tokens.dart';
+import '../theme/animation_tokens.dart';
 
-/// How It Works screen - explains the app to adults.
-/// Educational, reassuring, privacy-focused.
-class HowItWorksScreen extends StatelessWidget {
+/// About / How it works screen
+/// Document-like, structured reading experience
+/// Builds trust through clarity, not decoration
+class HowItWorksScreen extends StatefulWidget {
   const HowItWorksScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+  State<HowItWorksScreen> createState() => _HowItWorksScreenState();
+}
 
+class _HowItWorksScreenState extends State<HowItWorksScreen> {
+  bool _contentVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() => _contentVisible = true);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('How it works'),
-        centerTitle: true,
-        backgroundColor: AppColors.background,
-        surfaceTintColor: Colors.transparent,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        children: [
-          // Hero Section
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(AppRadius.card),
+      // No AppBar - document-like feel
+      body: SafeArea(
+        child: AnimatedOpacity(
+          opacity: _contentVisible ? 1.0 : 0.0,
+          duration: kCrossFadeDuration,
+          child: ListView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
             ),
-            child: Column(
-              children: [
-                Icon(
-                  Icons.visibility_outlined,
-                  size: 48,
-                  color: AppColors.primary,
+            children: [
+              const SizedBox(height: AppSpacing.md),
+
+              // ═══════════════════════════════════════════════════════════
+              // PAGE TITLE (Anchor)
+              // ═══════════════════════════════════════════════════════════
+              Text(
+                'About NeuroPlay',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.3,
+                  height: 1.3,
                 ),
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  'Observe. Understand. Support.',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'AI Samasya helps adults observe learning patterns '
-                  'through simple, engaging activities.',
-                  style: theme.textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: AppSpacing.lg),
-
-          // Step 1
-          _StepCard(
-            number: '1',
-            title: 'Create a learner profile',
-            description:
-                'Add an alias for each child you want to observe. '
-                'No personal information is required — just a name you\'ll recognize.',
-            icon: Icons.person_add_outlined,
-          ),
-
-          const SizedBox(height: AppSpacing.sm),
-
-          // Step 2
-          _StepCard(
-            number: '2',
-            title: 'Start a learning activity',
-            description:
-                'Guide the child through a short, game-like activity. '
-                'Activities are designed to be fun and non-stressful, '
-                'taking only 2-3 minutes.',
-            icon: Icons.play_circle_outline,
-          ),
-
-          const SizedBox(height: AppSpacing.sm),
-
-          // Step 3
-          _StepCard(
-            number: '3',
-            title: 'Review observations',
-            description:
-                'After the activity, see patterns in how the child engaged. '
-                'Observations focus on attention, response timing, and consistency.',
-            icon: Icons.insights_outlined,
-          ),
-
-          const SizedBox(height: AppSpacing.sm),
-
-          // Step 4
-          _StepCard(
-            number: '4',
-            title: 'Track over time',
-            description:
-                'Multiple sessions reveal trends. See how patterns evolve '
-                'across different days and contexts.',
-            icon: Icons.trending_up_outlined,
-          ),
-
-          const SizedBox(height: AppSpacing.lg),
-
-          // Privacy Section
-          Text(
-            'Privacy & Safety',
-            style: theme.textTheme.titleLarge,
-          ),
-
-          const SizedBox(height: AppSpacing.sm),
-
-          _InfoCard(
-            icon: Icons.shield_outlined,
-            title: 'No child identity stored',
-            description:
-                'We only store the alias you provide. No names, photos, '
-                'or identifying information about children.',
-          ),
-
-          const SizedBox(height: AppSpacing.xs),
-
-          _InfoCard(
-            icon: Icons.delete_outline,
-            title: 'Raw data is temporary',
-            description:
-                'Individual tap data is processed and discarded. '
-                'Only summarized patterns are saved.',
-          ),
-
-          const SizedBox(height: AppSpacing.xs),
-
-          _InfoCard(
-            icon: Icons.lock_outline,
-            title: 'Your data stays yours',
-            description:
-                'Each observer can only see their own learners. '
-                'Data is never shared or sold.',
-          ),
-
-          const SizedBox(height: AppSpacing.lg),
-
-          // Important Note
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            decoration: BoxDecoration(
-              color: AppColors.accent.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(AppRadius.card),
-              border: Border.all(
-                color: AppColors.accent.withOpacity(0.3),
               ),
-            ),
+
+              const SizedBox(height: 18),
+
+              // Title divider
+              Container(
+                height: 1,
+                color: AppColors.border,
+              ),
+
+              const SizedBox(height: 28),
+
+              // ═══════════════════════════════════════════════════════════
+              // SECTION: What this tool does
+              // ═══════════════════════════════════════════════════════════
+              _buildSectionHeader('What this tool does'),
+              const SizedBox(height: 10),
+              _buildParagraph(
+                'NeuroPlay observes learning patterns through short activities. '
+                'It provides support suggestions based on observed behaviours, '
+                'not diagnoses or assessments.',
+              ),
+
+              const SizedBox(height: 32),
+
+              // ═══════════════════════════════════════════════════════════
+              // SECTION: How it works
+              // ═══════════════════════════════════════════════════════════
+              _buildSectionHeader('How it works'),
+              const SizedBox(height: 10),
+              _buildNumberedList([
+                'Add a learner using an alias (no identifying information)',
+                'Start an observation activity',
+                'Review observed patterns after completion',
+                'Use support suggestions to guide learning',
+              ]),
+
+              const SizedBox(height: 32),
+
+              // ═══════════════════════════════════════════════════════════
+              // SECTION: Privacy
+              // ═══════════════════════════════════════════════════════════
+              _buildSectionHeader('Privacy'),
+              const SizedBox(height: 10),
+              _buildParagraph(
+                'No child identity is stored. Only adult-defined aliases are used.',
+              ),
+              const SizedBox(height: 8),
+              _buildParagraph(
+                'Raw activity data is processed immediately and not retained. '
+                'Only pattern summaries are saved.',
+              ),
+
+              const SizedBox(height: 32),
+
+              // ═══════════════════════════════════════════════════════════
+              // SECTION: What we observe
+              // ═══════════════════════════════════════════════════════════
+              _buildSectionHeader('What we observe'),
+              const SizedBox(height: 10),
+              _buildBulletList([
+                'Response timing and consistency',
+                'Engagement patterns during activities',
+                'Focus variability',
+              ]),
+              const SizedBox(height: 12),
+              _buildParagraph(
+                'These observations may inform support strategies but do not '
+                'indicate any condition or diagnosis.',
+              ),
+
+              // ═══════════════════════════════════════════════════════════
+              // FOOTER DISCLAIMER
+              // ═══════════════════════════════════════════════════════════
+              const SizedBox(height: 40),
+
+              Container(
+                height: 1,
+                color: AppColors.border,
+              ),
+
+              const SizedBox(height: 20),
+
+              Text(
+                kDisclaimer,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  color: AppColors.muted,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+
+              const SizedBox(height: AppSpacing.lg),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Section header - clearly secondary to page title
+  Widget _buildSectionHeader(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 17,
+        fontWeight: FontWeight.w500,
+        color: AppColors.textPrimary,
+        height: 1.3,
+      ),
+    );
+  }
+
+  /// Body paragraph - secondary color, good line height
+  Widget _buildParagraph(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w400,
+        color: AppColors.textSecondary,
+        height: 1.55,
+      ),
+    );
+  }
+
+  /// Numbered list - indented, spaced items
+  Widget _buildNumberedList(List<String> items) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: items.asMap().entries.map((entry) {
+          final index = entry.key + 1;
+          final text = entry.value;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.info_outline,
-                  size: 20,
-                  color: AppColors.accent,
+                SizedBox(
+                  width: 20,
+                  child: Text(
+                    '$index.',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: AppColors.textSecondary,
+                      height: 1.55,
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Important',
-                        style: theme.textTheme.bodyLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'AI Samasya provides observational insights only. '
-                        'It is not a diagnostic or assessment tool. '
-                        'Always consult qualified professionals for concerns '
-                        'about a child\'s development.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: AppColors.textSecondary,
+                      height: 1.55,
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
-
-          const SizedBox(height: AppSpacing.lg),
-
-          // What We Observe Section
-          Text(
-            'What we observe',
-            style: theme.textTheme.titleLarge,
-          ),
-
-          const SizedBox(height: AppSpacing.sm),
-
-          _MetricCard(
-            title: 'Response timing',
-            description: 'How quickly does the child respond to prompts?',
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          _MetricCard(
-            title: 'Consistency',
-            description: 'How steady are response times across the activity?',
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          _MetricCard(
-            title: 'Engagement',
-            description: 'Does the child maintain focus throughout?',
-          ),
-
-          const SizedBox(height: AppSpacing.xl),
-        ],
+          );
+        }).toList(),
       ),
     );
   }
-}
 
-class _StepCard extends StatelessWidget {
-  final String number;
-  final String title;
-  final String description;
-  final IconData icon;
-
-  const _StepCard({
-    required this.number,
-    required this.title,
-    required this.description,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Text(
-                  number,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      height: 1.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String description;
-
-  const _InfoCard({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: AppColors.primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    description,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MetricCard extends StatelessWidget {
-  final String title;
-  final String description;
-
-  const _MetricCard({
-    required this.title,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: 12,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
+  /// Bullet list - indented, spaced items
+  Widget _buildBulletList(List<String> items) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: items.map((text) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.w500,
+                const SizedBox(
+                  width: 20,
+                  child: Text(
+                    '•',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: AppColors.textSecondary,
+                      height: 1.55,
+                    ),
                   ),
                 ),
-                Text(
-                  description,
-                  style: theme.textTheme.bodySmall,
+                Expanded(
+                  child: Text(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: AppColors.textSecondary,
+                      height: 1.55,
+                    ),
+                  ),
                 ),
               ],
             ),
-          ),
-        ],
+          );
+        }).toList(),
       ),
     );
   }

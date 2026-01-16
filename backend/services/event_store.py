@@ -8,6 +8,10 @@
 # - Cleared immediately after pattern extraction
 # - No raw behavior data is ever written to disk
 #
+# Two modes:
+# - Observer sessions: observer_id is set (for parent/teacher app)
+# - Child sessions: observer_id is None (for child app via learner_code)
+#
 # =============================================================================
 
 from typing import Dict, List, Optional
@@ -21,7 +25,7 @@ class SessionData:
     """In-memory session data."""
     session_id: UUID
     learner_id: UUID
-    observer_id: UUID
+    observer_id: Optional[UUID]  # None for child app sessions
     game_type: str
     events: List[dict] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.utcnow)
@@ -43,7 +47,7 @@ class EventStore:
         self,
         session_id: UUID,
         learner_id: UUID,
-        observer_id: UUID,
+        observer_id: Optional[UUID],  # Can be None for child app
         game_type: str
     ) -> SessionData:
         """Create a new session in memory."""

@@ -1,60 +1,94 @@
 # =============================================================================
 # REPORT ROUTES
 # Retrieve pattern snapshots and generate reports
+#
+# UI-ALIGNED: Returns language-only outputs
+# - Pattern titles (text)
+# - Descriptions (text)
+# - Support suggestions (text)
+# - Disclaimer
+#
+# EXPLICITLY REMOVED:
+# - Numeric confidence values
+# - Raw metrics
+# - Thresholds
 # =============================================================================
 
 from uuid import UUID
-from typing import List, Optional
+from typing import List
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from ..dependencies import CurrentObserver
-from ..db.supabase import get_supabase
+from ..db.supabase import get_supabase, get_supabase_admin
 from ..utils.constants import DISCLAIMER_SHORT
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-class PatternSnapshot(BaseModel):
-    """A single pattern snapshot."""
-    snapshot_id: UUID
-    session_id: UUID
+# =============================================================================
+# RESPONSE SCHEMAS (Language-Only)
+# =============================================================================
+
+class PatternSummary(BaseModel):
+    """
+    A pattern summary - language only, no metrics.
+    
+    REMOVED from previous version:
+    - confidence (numeric)
+    - any numeric values
+    """
     pattern_name: str
-    confidence: str
     learning_impact: str
     support_focus: str
-    created_at: str
 
 
 class SessionReport(BaseModel):
-    """Report for a single session."""
+    """
+    Report for a single session.
+    
+    Returns:
+    - Pattern titles
+    - Descriptions (learning_impact)
+    - Support suggestions (support_focus)
+    - Disclaimer
+    
+    Does NOT return:
+    - Numeric confidence values
+    - Raw metrics
+    - Thresholds
+    - Game names
+    """
     session_id: UUID
-    learner_id: UUID
-    game_type: str
-    patterns: List[PatternSnapshot]
+    patterns: List[PatternSummary]
     disclaimer: str
 
 
 class LearnerReport(BaseModel):
-    """All patterns for a learner."""
+    """
+    All patterns for a learner.
+    
+    Simplified: No session counts or timestamps.
+    """
     learner_id: UUID
     alias: str
-    total_sessions: int
-    patterns: List[PatternSnapshot]
+    patterns: List[PatternSummary]
     disclaimer: str
 
 
+# =============================================================================
+# ROUTES
+# =============================================================================
+
 @router.get("/session/{session_id}", response_model=SessionReport)
-async def get_session_report(
-    session_id: UUID,
-    observer: CurrentObserver
-):
+async def get_session_report(session_id: UUID, observer: CurrentObserver):
     """
     Get the pattern report for a specific session.
     
-    Returns all detected patterns with explanations.
+    Returns language-only pattern summaries.
+    No numeric confidence values or raw metrics.
     """
-    supabase = get_supabase()
+    supabase = get_supabase_admin() or get_supabase()
     if not supabase:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -88,42 +122,36 @@ async def get_session_report(
             detail="Not your learner"
         )
     
-    # Get pattern snapshots for this session
-    patterns_result = supabase.table("pattern_snapshots").select("*").eq(
-        "session_id", str(session_id)
-    ).execute()
+    # Get pattern snapshots - select only language fields
+    patterns_result = supabase.table("pattern_snapshots").select(
+        "pattern_name, learning_impact, support_focus"
+    ).eq("session_id", str(session_id)).execute()
     
     patterns = [
-        PatternSnapshot(
-            snapshot_id=UUID(p["snapshot_id"]),
-            session_id=UUID(p["session_id"]),
+        PatternSummary(
             pattern_name=p["pattern_name"],
-            confidence=p["confidence"],
             learning_impact=p["learning_impact"],
-            support_focus=p["support_focus"],
-            created_at=p["created_at"]
+            support_focus=p["support_focus"]
         )
         for p in (patterns_result.data or [])
     ]
     
     return SessionReport(
         session_id=session_id,
-        learner_id=UUID(learner_id),
-        game_type=session["game_set"],
         patterns=patterns,
         disclaimer=DISCLAIMER_SHORT
     )
 
 
 @router.get("/learner/{learner_id}", response_model=LearnerReport)
-async def get_learner_report(
-    learner_id: UUID,
-    observer: CurrentObserver
-):
+async def get_learner_report(learner_id: UUID, observer: CurrentObserver):
     """
     Get all patterns for a learner across all sessions.
+    
+    Returns language-only pattern summaries.
+    No session counts, timestamps, or numeric values.
     """
-    supabase = get_supabase()
+    supabase = get_supabase_admin() or get_supabase()
     if not supabase:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -131,7 +159,9 @@ async def get_learner_report(
         )
     
     # Get learner and verify ownership
-    learner_result = supabase.table("learners").select("*").eq(
+    learner_result = supabase.table("learners").select(
+        "learner_id, alias"
+    ).eq(
         "learner_id", str(learner_id)
     ).eq(
         "observer_id", str(observer.observer_id)
@@ -140,32 +170,23 @@ async def get_learner_report(
     if not learner_result.data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Learner not found or does not belong to you"
+            detail="Learner not found"
         )
     
     learner = learner_result.data[0]
     
-    # Count sessions
-    sessions_result = supabase.table("sessions").select(
-        "session_id", count="exact"
-    ).eq("learner_id", str(learner_id)).execute()
-    
-    total_sessions = sessions_result.count or 0
-    
-    # Get all pattern snapshots for this learner
-    patterns_result = supabase.table("pattern_snapshots").select("*").eq(
+    # Get all pattern snapshots - select only language fields
+    patterns_result = supabase.table("pattern_snapshots").select(
+        "pattern_name, learning_impact, support_focus"
+    ).eq(
         "learner_id", str(learner_id)
     ).order("created_at", desc=True).execute()
     
     patterns = [
-        PatternSnapshot(
-            snapshot_id=UUID(p["snapshot_id"]),
-            session_id=UUID(p["session_id"]),
+        PatternSummary(
             pattern_name=p["pattern_name"],
-            confidence=p["confidence"],
             learning_impact=p["learning_impact"],
-            support_focus=p["support_focus"],
-            created_at=p["created_at"]
+            support_focus=p["support_focus"]
         )
         for p in (patterns_result.data or [])
     ]
@@ -173,7 +194,55 @@ async def get_learner_report(
     return LearnerReport(
         learner_id=learner_id,
         alias=learner["alias"],
-        total_sessions=total_sessions,
         patterns=patterns,
         disclaimer=DISCLAIMER_SHORT
     )
+
+
+@router.get("/ai/{report_id}")
+async def get_ai_report(report_id: UUID, observer: CurrentObserver):
+    """
+    Get an AI-generated report from the reports table.
+    
+    Returns the narrative report content and validation status.
+    """
+    supabase = get_supabase_admin() or get_supabase()
+    if not supabase:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database connection error"
+        )
+    
+    # Get report
+    result = supabase.table("reports").select("*").eq(
+        "report_id", str(report_id)
+    ).execute()
+    
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+    
+    report = result.data[0]
+    
+    # Verify learner belongs to observer
+    learner_check = supabase.table("learners").select("learner_id").eq(
+        "learner_id", report["learner_id"]
+    ).eq(
+        "observer_id", str(observer.observer_id)
+    ).execute()
+    
+    if not learner_check.data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Report not accessible"
+        )
+    
+    return {
+        "report_id": report["report_id"],
+        "content": report["content"],
+        "validation_status": report["validation_status"],
+        "generation_method": report["generation_method"],
+        "disclaimer": DISCLAIMER_SHORT
+    }

@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import '../theme/design_tokens.dart';
 
+/// Sign up screen - institutional, restrained
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
 
@@ -31,24 +32,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
 
-    // Validation
-    if (email.isEmpty) {
-      setState(() => _errorMessage = 'Please enter your email.');
-      return;
-    }
-
-    if (password.isEmpty) {
-      setState(() => _errorMessage = 'Please enter a password.');
+    if (password != confirmPassword) {
+      setState(() => _errorMessage = 'Passwords do not match');
       return;
     }
 
     if (password.length < 6) {
-      setState(() => _errorMessage = 'Password must be at least 6 characters.');
-      return;
-    }
-
-    if (password != confirmPassword) {
-      setState(() => _errorMessage = 'Passwords do not match.');
+      setState(() => _errorMessage = 'Password must be at least 6 characters');
       return;
     }
 
@@ -58,25 +48,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
     });
 
     try {
-      final response = await supabase.auth.signUp(
+      await supabase.auth.signUp(
         email: email,
         password: password,
       );
 
-      if (!mounted) return;
-
-      if (response.user != null && response.session == null) {
-        // Email confirmation required
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Check your email to confirm your account.')),
-        );
+      if (mounted) {
         Navigator.pop(context);
-      } else if (response.session != null) {
-        // Signed in automatically
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Account created successfully.')),
+          const SnackBar(content: Text('Account created. You can now sign in.')),
         );
-        // AuthGate will handle navigation
       }
     } on AuthException catch (e) {
       setState(() => _errorMessage = e.message);
@@ -94,118 +75,157 @@ class _SignUpScreenState extends State<SignUpScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Create account'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Join AI Samasya',
-                  style: theme.textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Create an account to track learning patterns.',
-                  style: theme.textTheme.bodyMedium,
-                ),
-
-                const SizedBox(height: AppSpacing.lg),
-
-                // Error message
-                if (_errorMessage != null) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.accent.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(AppRadius.input),
-                      border: Border.all(
-                        color: AppColors.accent.withOpacity(0.3),
-                      ),
-                    ),
-                    child: Text(
-                      _errorMessage!,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                ],
-
-                // Email field
-                TextField(
-                  controller: _emailController,
-                  decoration: appInputDecoration(label: 'Email'),
-                  keyboardType: TextInputType.emailAddress,
-                  textInputAction: TextInputAction.next,
-                  enabled: !_isLoading,
-                ),
-
-                const SizedBox(height: 14),
-
-                // Password field
-                TextField(
-                  controller: _passwordController,
-                  decoration: appInputDecoration(label: 'Password'),
-                  obscureText: true,
-                  textInputAction: TextInputAction.next,
-                  enabled: !_isLoading,
-                ),
-
-                const SizedBox(height: 14),
-
-                // Confirm password field
-                TextField(
-                  controller: _confirmPasswordController,
-                  decoration: appInputDecoration(label: 'Confirm password'),
-                  obscureText: true,
-                  textInputAction: TextInputAction.done,
-                  enabled: !_isLoading,
-                  onSubmitted: (_) => _signUp(),
-                ),
-
-                const SizedBox(height: AppSpacing.md),
-
-                // Sign Up button
-                FilledButton(
-                  onPressed: _isLoading ? null : _signUp,
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 18,
-                          width: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.lg,
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ─────────────────────────────────────────────────────────
+                  // Logo / Wordmark (centered, distinguished)
+                  // ─────────────────────────────────────────────────────────
+                  Center(
+                    child: Column(
+                      children: [
+                        Text(
+                          'NeuroPlay',
+                          style: theme.textTheme.headlineLarge?.copyWith(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.5,
+                            color: AppColors.primary,
                           ),
-                        )
-                      : const Text('Create account'),
-                ),
-
-                const SizedBox(height: AppSpacing.sm),
-
-                // Back to sign in
-                Center(
-                  child: TextButton(
-                    onPressed: _isLoading ? null : () => Navigator.pop(context),
-                    child: const Text('Already have an account? Sign in'),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          width: 40,
+                          height: 3,
+                          decoration: BoxDecoration(
+                            color: AppColors.secondary,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
 
-                const SizedBox(height: AppSpacing.lg),
+                  const SizedBox(height: AppSpacing.lg),
 
-                // Disclaimer
-                Text(
-                  'By creating an account, you agree that this tool provides observational insights only, not diagnostic assessments.',
-                  style: theme.textTheme.bodySmall,
-                  textAlign: TextAlign.center,
-                ),
-              ],
+                  // ─────────────────────────────────────────────────────────
+                  // Header
+                  // ─────────────────────────────────────────────────────────
+                  Text(
+                    'Create account',
+                    style: theme.textTheme.headlineMedium,
+                  ),
+
+                  const SizedBox(height: AppSpacing.md),
+
+                  // ─────────────────────────────────────────────────────────
+                  // Error message
+                  // ─────────────────────────────────────────────────────────
+                  if (_errorMessage != null) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(AppRadius.input),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Text(
+                        _errorMessage!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
+
+                  // ─────────────────────────────────────────────────────────
+                  // Email field
+                  // ─────────────────────────────────────────────────────────
+                  TextField(
+                    controller: _emailController,
+                    decoration: appInputDecoration(label: 'Email'),
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    enabled: !_isLoading,
+                  ),
+
+                  const SizedBox(height: AppSpacing.sm),
+
+                  // ─────────────────────────────────────────────────────────
+                  // Password field
+                  // ─────────────────────────────────────────────────────────
+                  TextField(
+                    controller: _passwordController,
+                    decoration: appInputDecoration(label: 'Password'),
+                    obscureText: true,
+                    textInputAction: TextInputAction.next,
+                    enabled: !_isLoading,
+                  ),
+
+                  const SizedBox(height: AppSpacing.sm),
+
+                  // ─────────────────────────────────────────────────────────
+                  // Confirm password field
+                  // ─────────────────────────────────────────────────────────
+                  TextField(
+                    controller: _confirmPasswordController,
+                    decoration: appInputDecoration(label: 'Confirm password'),
+                    obscureText: true,
+                    textInputAction: TextInputAction.done,
+                    enabled: !_isLoading,
+                    onSubmitted: (_) => _signUp(),
+                  ),
+
+                  const SizedBox(height: AppSpacing.md),
+
+                  // ─────────────────────────────────────────────────────────
+                  // Sign up button
+                  // ─────────────────────────────────────────────────────────
+                  FilledButton(
+                    onPressed: _isLoading ? null : _signUp,
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Create account'),
+                  ),
+
+                  const SizedBox(height: AppSpacing.xl),
+
+                  // ─────────────────────────────────────────────────────────
+                  // Disclaimer
+                  // ─────────────────────────────────────────────────────────
+                  Text(
+                    kDisclaimer,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 12,
+                      color: AppColors.muted,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

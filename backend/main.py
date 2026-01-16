@@ -1,6 +1,13 @@
-# FastAPI application entry point
-# Learning Pattern Analysis API
-# Real Supabase Auth integration
+# =============================================================================
+# FastAPI Application Entry Point
+# Learning Pattern Analysis API (NeuroPlay Backend)
+# =============================================================================
+#
+# Two access modes:
+# 1. OBSERVER (Parent/Teacher): Supabase JWT authentication
+# 2. CHILD APP: Learner code only (write-only, no auth)
+#
+# =============================================================================
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -10,6 +17,7 @@ import asyncio
 from .config import get_settings_dev
 from .routes import auth, learners, sessions, reports, trends
 from .routes.health import router as health_router
+from .routes import reports_generate
 from .utils.ttl_cleanup import start_cleanup_scheduler
 from .utils.constants import DISCLAIMER_SHORT
 
@@ -20,13 +28,13 @@ async def lifespan(app: FastAPI):
     settings = get_settings_dev()
     
     if settings:
-        print(f"✅ Starting {settings.app_name}")
+        print(f" Starting NeuroPlay API")
         print(f"   Environment: {settings.environment}")
         print(f"   Supabase: {settings.supabase_url[:30]}...")
     else:
         print("⚠️  Starting in degraded mode - check .env file")
     
-    print("🔐 Auth: Real Supabase JWT verification enabled")
+    print("🔐 Auth: Supabase JWT + Learner Code")
     
     cleanup_task = asyncio.create_task(start_cleanup_scheduler())
     
@@ -37,38 +45,60 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Learning Pattern Analysis API",
-    redirect_slashes=False,  # Don't redirect /path to /path/ or vice versa
+    title="NeuroPlay API",
+    redirect_slashes=False,
     description=f"""
-Privacy-safe API for analyzing children's learning patterns.
+Privacy-safe API for observing children's learning patterns.
 
-## Authentication
-All protected endpoints require a valid Supabase JWT token.
+## Authentication Modes
 
+### 1. Observer (Parent/Teacher App)
+Requires Supabase JWT token:
 ```
 Authorization: Bearer <your-supabase-token>
 ```
 
+### 2. Child App
+Uses learner_code only - no authentication.
+Write-only access for session data.
+
+---
+
 ## Quick Start
+
+### For Parent/Teacher App:
 1. Login via Supabase Auth (frontend)
-2. Call `GET /api/auth/me` to verify token
-3. Call `GET /api/learners` to list your learners
+2. `GET /api/auth/me` - verify token
+3. `GET /api/learners` - list learners
+4. `POST /api/learners` - create learner (returns code ONCE)
+5. `POST /api/sessions/start` - start session
+6. `GET /api/reports/learner/{{id}}` - view patterns
+
+### For Child App:
+1. `POST /api/sessions/child/start` - start with learner_code
+2. `POST /api/sessions/child/{{id}}/events` - log events
+3. `POST /api/sessions/child/{{id}}/complete` - finish
+
+---
 
 ## Public Endpoints (no auth)
 - `GET /health` - Health check
-- `GET /health/config` - Config status
+- `POST /api/sessions/child/*` - Child app routes (learner_code required)
 
-## Protected Endpoints (auth required)
+## Protected Endpoints (JWT required)
 - `GET /api/auth/me` - Get current observer
-- `GET /api/learners` - List learners
-- `POST /api/learners` - Create learner
-- All `/api/sessions`, `/api/reports`, `/api/trends`
+- `GET/POST /api/learners` - Manage learners
+- `POST /api/sessions/start|events|complete` - Observer sessions
+- `GET /api/reports/*` - View pattern reports
+
+## Phase-Gated (returns not_available)
+- `GET /api/trends/*` - Longitudinal trends (future)
 
 ---
 
 **Disclaimer**: {DISCLAIMER_SHORT}
     """,
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -84,11 +114,12 @@ app.add_middleware(
 # Public routes (no auth)
 app.include_router(health_router)
 
-# Protected routes (auth required)
+# Protected routes (auth required for most)
 app.include_router(auth.router, prefix="/api")
 app.include_router(learners.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
+app.include_router(reports_generate.router, prefix="/api")
 app.include_router(trends.router, prefix="/api")
 
 
@@ -96,9 +127,9 @@ app.include_router(trends.router, prefix="/api")
 async def root():
     """Root endpoint."""
     return {
-        "name": "Learning Pattern Analysis API",
-        "version": "1.0.0",
-        "auth": "Supabase JWT",
+        "name": "NeuroPlay API",
+        "version": "1.1.0",
+        "auth_modes": ["supabase_jwt", "learner_code"],
         "docs": "/docs",
         "health": "/health",
     }

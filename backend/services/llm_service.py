@@ -169,7 +169,6 @@ Example good language:
             formatted.append({
                 "category": p.category.value,
                 "type": p.pattern_type,
-                "confidence": p.confidence.value,
                 "indicators": p.indicators,
             })
         

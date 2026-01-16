@@ -8,6 +8,11 @@
 # OWNERSHIP: observer_id NEVER comes from client
 # - Always injected from CurrentObserver (JWT auth)
 # - RLS enforces isolation at database level
+#
+# LEARNER CODE: Generated on creation, shown ONCE
+# - Used by child app for session ingestion
+# - Grants WRITE-ONLY access
+# - Never shown again after creation
 
 from fastapi import APIRouter, HTTPException, status
 from typing import List
@@ -15,8 +20,9 @@ from uuid import UUID
 from datetime import datetime
 
 from ..dependencies import CurrentObserver
-from ..schemas.learner import LearnerCreate, LearnerRead, LearnerUpdate
+from ..schemas.learner import LearnerCreate, LearnerRead, LearnerUpdate, LearnerCreateResponse
 from ..db.supabase import get_supabase, get_supabase_admin
+from ..utils.code_generator import generate_learner_code
 
 router = APIRouter(prefix="/learners", tags=["learners"])
 
@@ -25,7 +31,7 @@ router = APIRouter(prefix="/learners", tags=["learners"])
 # POST /api/learners - Create a new learner alias
 # =============================================================================
 
-@router.post("", response_model=LearnerRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=LearnerCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_learner(
     learner: LearnerCreate,
     observer: CurrentObserver  # REQUIRED - will 401 if not authenticated
@@ -39,20 +45,20 @@ async def create_learner(
         {"alias": "Learner A"}
     
     Success (201):
-        {"learner_id": "uuid", "alias": "Learner A", "created_at": "ISO8601"}
+        {
+            "learner_id": "uuid",
+            "alias": "Learner A",
+            "learner_code": "ABC12345",  // SHOWN ONCE
+            "created_at": "ISO8601",
+            "message": "Save this code - it will not be shown again."
+        }
+    
+    IMPORTANT: learner_code is returned ONCE. Parent must save it.
     
     Error (409):
         {"detail": "A learner with this alias already exists."}
-    
-    NOTE: 
-    - observer_id comes from auth context, NEVER from client
-    - Alias is trimmed and validated
-    - Duplicates are blocked within the same observer
     """
-    print(f"[DEBUG] create_learner called: alias={learner.alias}, observer_id={observer.observer_id}")
-    
     # Use admin client for write operations (bypasses RLS)
-    # Backend is trusted - it already validates JWT
     supabase = get_supabase_admin() or get_supabase()
     
     if not supabase:
@@ -61,7 +67,6 @@ async def create_learner(
             detail="Database connection unavailable"
         )
     
-    # Alias is already sanitized by Pydantic validator
     sanitized_alias = learner.alias
     
     try:
@@ -78,21 +83,42 @@ async def create_learner(
                 detail="A learner with this alias already exists."
             )
         
-        # Insert new learner
-        # observer_id comes from auth context, NOT from client
+        # Generate unique learner code
+        # Retry up to 5 times in case of collision (extremely rare)
+        learner_code = None
+        for _ in range(5):
+            candidate_code = generate_learner_code()
+            # Check if code already exists
+            code_check = supabase.table("learners").select("learner_id").eq(
+                "learner_code", candidate_code
+            ).execute()
+            if not code_check.data or len(code_check.data) == 0:
+                learner_code = candidate_code
+                break
+        
+        if not learner_code:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate unique code. Please try again."
+            )
+        
+        # Insert new learner with generated code
         result = supabase.table("learners").insert({
             "observer_id": str(observer.observer_id),
-            "alias": sanitized_alias
+            "alias": sanitized_alias,
+            "learner_code": learner_code
         }).execute()
         
         if result.data and len(result.data) > 0:
             data = result.data[0]
-            return LearnerRead(
+            return LearnerCreateResponse(
                 learner_id=UUID(data["learner_id"]),
                 alias=data["alias"],
+                learner_code=data["learner_code"],  # Shown ONCE
                 created_at=datetime.fromisoformat(
                     data["created_at"].replace("Z", "+00:00")
-                )
+                ),
+                message="Save this code - it will not be shown again."
             )
         
         raise HTTPException(
@@ -101,18 +127,14 @@ async def create_learner(
         )
         
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        print(f"[DEBUG] create_learner ERROR: {type(e).__name__}: {e}")
-        # Check for unique constraint violation (Supabase/PostgreSQL)
         error_str = str(e).lower()
         if "unique" in error_str or "duplicate" in error_str or "23505" in error_str:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A learner with this alias already exists."
             )
-        # Generic error - do NOT expose internal details
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred"
@@ -130,20 +152,18 @@ async def list_learners(observer: CurrentObserver):
     
     REQUIRES: Valid authentication token
     
-    Uses admin client since we validate JWT ourselves.
-    Filters by observer_id from auth context.
+    Returns ONLY:
+    - learner_id
+    - alias
+    - created_at
+    
+    Does NOT return:
+    - session counts
+    - last activity timestamps
+    - derived stats
+    - learner_code (shown only on creation)
     """
-    import sys
-    print(f"[DEBUG] list_learners called: observer_id={observer.observer_id}", flush=True)
-    sys.stdout.flush()
-    
-    # Use admin client to bypass RLS (we already validated JWT)
-    supabase = get_supabase_admin()
-    print(f"[DEBUG] Admin client: {supabase is not None}", flush=True)
-    
-    if not supabase:
-        supabase = get_supabase()
-        print(f"[DEBUG] Fallback to anon client", flush=True)
+    supabase = get_supabase_admin() or get_supabase()
     
     if not supabase:
         raise HTTPException(
@@ -152,31 +172,26 @@ async def list_learners(observer: CurrentObserver):
         )
     
     try:
-        obs_id_str = str(observer.observer_id)
-        print(f"[DEBUG] Querying learners for observer_id: {obs_id_str}", flush=True)
-        
-        # Query learners for this observer
-        result = supabase.table("learners").select("*").eq(
-            "observer_id", obs_id_str
+        # Query learners - include learner_code for context screen
+        result = supabase.table("learners").select(
+            "learner_id, alias, learner_code, created_at"
+        ).eq(
+            "observer_id", str(observer.observer_id)
         ).order("created_at", desc=False).execute()
-        
-        print(f"[DEBUG] Query result count: {len(result.data) if result.data else 0}", flush=True)
-        print(f"[DEBUG] Raw result: {result.data}", flush=True)
         
         learners = []
         for data in result.data or []:
             learners.append(LearnerRead(
                 learner_id=UUID(data["learner_id"]),
                 alias=data["alias"],
+                learner_code=data["learner_code"],
                 created_at=datetime.fromisoformat(
                     data["created_at"].replace("Z", "+00:00")
                 )
             ))
-        print(f"[DEBUG] Returning {len(learners)} learners", flush=True)
         return learners
         
-    except Exception as e:
-        print(f"[DEBUG] ERROR: {e}", flush=True)
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred"
@@ -196,8 +211,10 @@ async def get_learner(
     Get a specific learner by ID.
     
     REQUIRES: Valid authentication token
+    
+    Does NOT return learner_code.
     """
-    supabase = get_supabase()
+    supabase = get_supabase_admin() or get_supabase()
     
     if not supabase:
         raise HTTPException(
@@ -206,10 +223,12 @@ async def get_learner(
         )
     
     try:
-        result = supabase.table("learners").select("*").eq(
+        result = supabase.table("learners").select(
+            "learner_id, alias, learner_code, created_at"
+        ).eq(
             "learner_id", str(learner_id)
         ).eq(
-            "observer_id", str(observer.observer_id)  # Ownership via auth
+            "observer_id", str(observer.observer_id)
         ).execute()
         
         if not result.data or len(result.data) == 0:
@@ -222,6 +241,7 @@ async def get_learner(
         return LearnerRead(
             learner_id=UUID(data["learner_id"]),
             alias=data["alias"],
+            learner_code=data["learner_code"],
             created_at=datetime.fromisoformat(
                 data["created_at"].replace("Z", "+00:00")
             )
@@ -259,7 +279,6 @@ async def update_learner(
             detail="No update data provided"
         )
     
-    # Use admin client for write operations
     supabase = get_supabase_admin() or get_supabase()
     
     if not supabase:
@@ -342,7 +361,6 @@ async def delete_learner(
     WARNING: This permanently removes all data for this learner.
     Cascade delete handles sessions, patterns, trends.
     """
-    # Use admin client for write operations
     supabase = get_supabase_admin() or get_supabase()
     
     if not supabase:
@@ -352,14 +370,12 @@ async def delete_learner(
         )
     
     try:
-        # Delete - ownership check via observer_id filter
         supabase.table("learners").delete().eq(
             "learner_id", str(learner_id)
         ).eq(
             "observer_id", str(observer.observer_id)
         ).execute()
         
-        # Cascade delete handles sessions, patterns, trends
         return
         
     except Exception:

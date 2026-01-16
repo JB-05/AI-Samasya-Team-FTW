@@ -1,19 +1,24 @@
 # =============================================================================
 # SESSION ROUTES
-# Minimal intelligence loop: start → events → complete → pattern
+# Two modes:
+# 1. Observer (Parent/Teacher) - authenticated, full access
+# 2. Child App - learner_code only, write-only access
 # =============================================================================
 
 from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, status
 
-from ..dependencies import CurrentObserver
-from ..db.supabase import get_supabase
+from ..dependencies import CurrentObserver, get_learner_by_code
+from ..db.supabase import get_supabase, get_supabase_admin
 from ..schemas.session import (
     SessionStart,
     SessionStartResponse,
     EventLog,
     SessionCompleteResponse,
-    SessionStatus
+    SessionStatus,
+    ChildSessionStart,
+    ChildSessionStartResponse,
+    ChildSessionCompleteResponse
 )
 from ..services.event_store import event_store
 from ..services.feature_engine import extract_focus_tap_features
@@ -22,20 +27,179 @@ from ..services.pattern_engine import infer_pattern
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
-@router.post("/start", response_model=SessionStartResponse)
-async def start_session(
-    request: SessionStart,
-    observer: CurrentObserver
-):
+# =============================================================================
+# CHILD APP ROUTES (No authentication, learner_code only)
+# =============================================================================
+
+@router.post("/child/start", response_model=ChildSessionStartResponse)
+async def child_start_session(request: ChildSessionStart):
     """
-    Start a new game session.
+    Start a new game session from child app.
     
-    1. Verify learner belongs to observer
-    2. Create session in database (metadata only)
-    3. Create in-memory event store
-    4. Return session_id for event logging
+    NO AUTHENTICATION REQUIRED.
+    Uses learner_code for write-only access.
+    Rate limited: 10 requests per minute per code.
+    
+    Input:
+        {"learner_code": "ABC12345", "game_type": "focus_tap"}
+    
+    Output:
+        {"session_id": "uuid"}
+    
+    Does NOT expose learner_id to child app.
     """
-    supabase = get_supabase()
+    # Get learner context from code (rate limited)
+    learner_context = await get_learner_by_code(request.learner_code)
+    
+    supabase = get_supabase_admin() or get_supabase()
+    if not supabase:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Service unavailable"
+        )
+    
+    # Create session in database
+    session_id = uuid4()
+    
+    session_data = {
+        "session_id": str(session_id),
+        "learner_id": str(learner_context.learner_id),
+        "game_set": request.game_type
+    }
+    
+    result = supabase.table("sessions").insert(session_data).execute()
+    
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start session"
+        )
+    
+    # Create in-memory event store (observer_id not needed for child app)
+    event_store.create_session(
+        session_id=session_id,
+        learner_id=learner_context.learner_id,
+        observer_id=None,  # Child app doesn't have observer context
+        game_type=request.game_type
+    )
+    
+    return ChildSessionStartResponse(session_id=session_id)
+
+
+@router.post("/child/{session_id}/events")
+async def child_log_events(session_id: UUID, request: EventLog):
+    """
+    Log gameplay events from child app.
+    
+    NO AUTHENTICATION REQUIRED.
+    Events are stored IN MEMORY ONLY.
+    They are NEVER persisted to the database.
+    
+    Returns only: {"status": "ok"}
+    """
+    session = event_store.get_session(session_id)
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    if session.is_complete:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session already completed"
+        )
+    
+    # Add events to in-memory store
+    events_data = [e.model_dump() for e in request.events]
+    event_store.add_events(session_id, events_data)
+    
+    return {"status": "ok"}
+
+
+@router.post("/child/{session_id}/complete", response_model=ChildSessionCompleteResponse)
+async def child_complete_session(session_id: UUID):
+    """
+    Complete a session from child app.
+    
+    NO AUTHENTICATION REQUIRED.
+    
+    Flow:
+    1. Get events from memory
+    2. Extract features
+    3. Infer pattern
+    4. Save pattern snapshot to database
+    5. CLEAR events from memory (privacy)
+    6. Return ONLY: {"status": "ok"}
+    
+    No metrics, patterns, or analysis returned to child.
+    """
+    session = event_store.get_session(session_id)
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    if session.is_complete:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session already completed"
+        )
+    
+    # Mark session as complete and get data
+    session_data = event_store.complete_session(session_id)
+    total_events = len(session_data.events)
+    
+    # Extract features and infer pattern (if enough events)
+    if total_events >= 3:
+        features = extract_focus_tap_features(session_data.events)
+        
+        if features:
+            pattern = infer_pattern(features)
+            
+            if pattern:
+                # Save pattern snapshot to database
+                supabase = get_supabase_admin() or get_supabase()
+                if supabase:
+                    snapshot_data = {
+                        "session_id": str(session_id),
+                        "learner_id": str(session.learner_id),
+                        "pattern_name": pattern.pattern_name,
+                        "confidence": pattern.confidence,
+                        "learning_impact": pattern.learning_impact,
+                        "support_focus": pattern.support_focus
+                    }
+                    
+                    supabase.table("pattern_snapshots").insert(snapshot_data).execute()
+    
+    # CRITICAL: Clear raw events from memory
+    event_store.clear_session(session_id)
+    
+    # Return ONLY status - no metrics or patterns to child
+    return ChildSessionCompleteResponse(status="ok")
+
+
+# =============================================================================
+# OBSERVER (Parent/Teacher) ROUTES - Authenticated
+# =============================================================================
+
+@router.post("/start", response_model=SessionStartResponse)
+async def start_session(request: SessionStart, observer: CurrentObserver):
+    """
+    Start a new game session (Observer/Parent app).
+    
+    REQUIRES: Valid authentication token
+    
+    Input:
+        {"learner_id": "uuid", "game_type": "focus_tap"}
+    
+    Output:
+        {"session_id": "uuid"}
+    """
+    supabase = get_supabase_admin() or get_supabase()
     if not supabase:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -52,10 +216,10 @@ async def start_session(
     if not learner_check.data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Learner not found or does not belong to you"
+            detail="Learner not found"
         )
     
-    # Create session in database (metadata only)
+    # Create session in database
     session_id = uuid4()
     
     session_data = {
@@ -80,25 +244,18 @@ async def start_session(
         game_type=request.game_type
     )
     
-    return SessionStartResponse(
-        session_id=session_id,
-        learner_id=request.learner_id,
-        game_type=request.game_type,
-        message="Session started. Send events to /sessions/{id}/events"
-    )
+    return SessionStartResponse(session_id=session_id)
 
 
 @router.post("/{session_id}/events")
-async def log_events(
-    session_id: UUID,
-    request: EventLog,
-    observer: CurrentObserver
-):
+async def log_events(session_id: UUID, request: EventLog, observer: CurrentObserver):
     """
-    Log gameplay events (tap events).
+    Log gameplay events (Observer/Parent app).
+    
+    REQUIRES: Valid authentication token
     
     Events are stored IN MEMORY ONLY.
-    They are NEVER persisted to the database.
+    Returns only: {"status": "ok"}
     """
     session = event_store.get_session(session_id)
     
@@ -108,8 +265,8 @@ async def log_events(
             detail="Session not found or expired"
         )
     
-    # Verify observer owns this session
-    if session.observer_id != observer.observer_id:
+    # Verify observer owns this session (if observer_id is set)
+    if session.observer_id and session.observer_id != observer.observer_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not your session"
@@ -121,24 +278,18 @@ async def log_events(
             detail="Session already completed"
         )
     
-    # Add events to in-memory store
     events_data = [e.model_dump() for e in request.events]
     event_store.add_events(session_id, events_data)
     
-    return {
-        "status": "ok",
-        "events_logged": len(request.events),
-        "total_events": event_store.get_event_count(session_id)
-    }
+    return {"status": "ok"}
 
 
 @router.post("/{session_id}/complete", response_model=SessionCompleteResponse)
-async def complete_session(
-    session_id: UUID,
-    observer: CurrentObserver
-):
+async def complete_session(session_id: UUID, observer: CurrentObserver):
     """
-    Complete a session and extract patterns.
+    Complete a session (Observer/Parent app).
+    
+    REQUIRES: Valid authentication token
     
     Flow:
     1. Get events from memory
@@ -146,7 +297,10 @@ async def complete_session(
     3. Infer pattern
     4. Save pattern snapshot to database
     5. CLEAR events from memory (privacy)
-    6. Return result
+    6. Return: {"status": "ok"}
+    
+    SIMPLIFIED: Returns only status, no metrics or patterns.
+    Observer views patterns via /reports endpoint.
     """
     session = event_store.get_session(session_id)
     
@@ -156,7 +310,7 @@ async def complete_session(
             detail="Session not found or expired"
         )
     
-    if session.observer_id != observer.observer_id:
+    if session.observer_id and session.observer_id != observer.observer_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not your session"
@@ -172,9 +326,7 @@ async def complete_session(
     session_data = event_store.complete_session(session_id)
     total_events = len(session_data.events)
     
-    pattern_name = None
-    
-    # Extract features and infer pattern (if enough events)
+    # Extract features and infer pattern
     if total_events >= 3:
         features = extract_focus_tap_features(session_data.events)
         
@@ -182,10 +334,7 @@ async def complete_session(
             pattern = infer_pattern(features)
             
             if pattern:
-                pattern_name = pattern.pattern_name
-                
-                # Save pattern snapshot to database
-                supabase = get_supabase()
+                supabase = get_supabase_admin() or get_supabase()
                 if supabase:
                     snapshot_data = {
                         "session_id": str(session_id),
@@ -198,26 +347,20 @@ async def complete_session(
                     
                     supabase.table("pattern_snapshots").insert(snapshot_data).execute()
     
-    # ==========================================================================
     # CRITICAL: Clear raw events from memory
-    # This ensures no raw behavior data is retained
-    # ==========================================================================
     event_store.clear_session(session_id)
     
-    return SessionCompleteResponse(
-        session_id=session_id,
-        total_events=total_events,
-        pattern_detected=pattern_name,
-        message="Session completed. Raw events cleared."
-    )
+    # Return only status
+    return SessionCompleteResponse(status="ok")
 
 
 @router.get("/{session_id}/status", response_model=SessionStatus)
-async def get_session_status(
-    session_id: UUID,
-    observer: CurrentObserver
-):
-    """Get current session status."""
+async def get_session_status(session_id: UUID, observer: CurrentObserver):
+    """
+    Get current session status (Observer only).
+    
+    REQUIRES: Valid authentication token
+    """
     session = event_store.get_session(session_id)
     
     if not session:
@@ -226,7 +369,7 @@ async def get_session_status(
             detail="Session not found or expired"
         )
     
-    if session.observer_id != observer.observer_id:
+    if session.observer_id and session.observer_id != observer.observer_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not your session"

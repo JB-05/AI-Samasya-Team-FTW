@@ -4,7 +4,12 @@ import 'package:http/http.dart' as http;
 
 import '../main.dart';
 import '../theme/design_tokens.dart';
+import '../theme/animation_tokens.dart';
+import '../widgets/skeleton.dart';
 
+/// Learning Summary screen
+/// Interpretive safety through structure
+/// Explains observed patterns in clear, non-diagnostic language
 class ReportScreen extends StatefulWidget {
   final String sessionId;
   final String learnerAlias;
@@ -22,6 +27,7 @@ class ReportScreen extends StatefulWidget {
 class _ReportScreenState extends State<ReportScreen> {
   Map<String, dynamic>? _report;
   bool _isLoading = true;
+  bool _contentVisible = false;
   String? _error;
 
   @override
@@ -31,11 +37,6 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Future<void> _fetchReport() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
     try {
       final token = supabase.auth.currentSession?.accessToken;
       if (token == null) {
@@ -59,6 +60,10 @@ class _ReportScreenState extends State<ReportScreen> {
           _report = json.decode(response.body);
           _isLoading = false;
         });
+        // Trigger fade-in after load
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _contentVisible = true);
+        });
       } else {
         setState(() {
           _error = 'Could not load report';
@@ -75,222 +80,330 @@ class _ReportScreenState extends State<ReportScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Session Report'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () {
-            // Pop back to dashboard
-            Navigator.of(context).popUntil((route) => route.isFirst);
-          },
-        ),
+        backgroundColor: AppColors.background,
+        elevation: 0,
+        automaticallyImplyLeading: true,
       ),
-      body: _buildBody(theme),
+      body: _buildBody(),
     );
   }
 
-  Widget _buildBody(ThemeData theme) {
+  Widget _buildBody() {
+    // Loading state
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+      return const Padding(
+        padding: EdgeInsets.all(AppSpacing.sm),
+        child: ReportSkeleton(),
       );
     }
 
+    // Error state
     if (_error != null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(_error!, style: theme.textTheme.bodyLarge),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: _fetchReport,
-              child: const Text('Try again'),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _error!,
+                style: const TextStyle(
+                  fontSize: 15,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Return home'),
+              ),
+            ],
+          ),
         ),
       );
     }
 
-    if (_report == null) {
-      return Center(
-        child: Text('No data', style: theme.textTheme.bodyMedium),
-      );
-    }
+    final patterns = _report?['patterns'] as List? ?? [];
+    final generatedAt = DateTime.now(); // Would come from backend in production
 
-    final patterns = _report!['patterns'] as List<dynamic>? ?? [];
-    final disclaimer = _report!['disclaimer'] as String? ?? '';
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    // Fade in entire content at once
+    return AnimatedOpacity(
+      opacity: _contentVisible ? 1.0 : 0.0,
+      duration: kFadeDuration,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
         children: [
-          // Header
-          Text(
-            'Report for ${widget.learnerAlias}',
-            style: theme.textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Focus Tap activity',
-            style: theme.textTheme.bodySmall,
+          // ═══════════════════════════════════════════════════════════════
+          // SCREEN TITLE
+          // ═══════════════════════════════════════════════════════════════
+          const Text(
+            'Learning Summary',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.3,
+              height: 1.3,
+            ),
           ),
 
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: 6),
 
-          // Patterns
+          Text(
+            'Based on recent learning activities',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: AppColors.textSecondary,
+              height: 1.5,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Title divider
+          Container(height: 1, color: AppColors.border),
+
+          // ═══════════════════════════════════════════════════════════════
+          // SECTION 1: Observed Patterns (Mandatory first)
+          // ═══════════════════════════════════════════════════════════════
+          const SizedBox(height: 28),
+
+          _buildSectionHeader('Observed patterns'),
+
+          const SizedBox(height: 10),
+
           if (patterns.isEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppSpacing.sm),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(AppRadius.card),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    'No patterns detected',
-                    style: theme.textTheme.bodyLarge,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Not enough data was collected in this session.',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ],
-              ),
+            _buildParagraph(
+              'No specific patterns were observed during this activity. '
+              'Responses were within typical ranges.',
             )
           else
-            ...patterns.map((p) => _buildPatternCard(theme, p)),
+            ...patterns.map((p) => _buildPatternBlock(p)),
 
-          const SizedBox(height: AppSpacing.lg),
+          // ═══════════════════════════════════════════════════════════════
+          // SECTION 2: What This May Affect
+          // ═══════════════════════════════════════════════════════════════
+          if (patterns.isNotEmpty) ...[
+            const SizedBox(height: 32),
 
-          // Disclaimer
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            decoration: BoxDecoration(
-              color: AppColors.border.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(AppRadius.card),
-            ),
-            child: Text(
-              disclaimer,
-              style: theme.textTheme.bodySmall,
-              textAlign: TextAlign.center,
-            ),
-          ),
+            _buildSectionHeader('What this may affect'),
 
-          const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: 10),
 
-          // Done button
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () {
-                Navigator.of(context).popUntil((route) => route.isFirst);
-              },
-              child: const Text('Done'),
-            ),
-          ),
+            ...patterns.map((p) {
+              final impact = p['learning_impact'] as String?;
+              if (impact == null || impact.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _buildParagraph(impact),
+              );
+            }),
+          ],
 
-          const SizedBox(height: AppSpacing.md),
-        ],
-      ),
-    );
-  }
+          // ═══════════════════════════════════════════════════════════════
+          // SECTION 3: Support Suggestions
+          // ═══════════════════════════════════════════════════════════════
+          if (patterns.isNotEmpty) ...[
+            const SizedBox(height: 32),
 
-  Widget _buildPatternCard(ThemeData theme, Map<String, dynamic> pattern) {
-    final patternName = pattern['pattern_name'] as String? ?? 'Unknown';
-    final confidence = pattern['confidence'] as String? ?? 'low';
-    final learningImpact = pattern['learning_impact'] as String? ?? '';
-    final supportFocus = pattern['support_focus'] as String? ?? '';
+            _buildSectionHeader('Support suggestions'),
 
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Pattern name + confidence
+            const SizedBox(height: 10),
+
+            ...patterns.map((p) {
+              final support = p['support_focus'] as String?;
+              if (support == null || support.isEmpty) return const SizedBox.shrink();
+              return _buildSupportSuggestion(support);
+            }),
+          ],
+
+          // ═══════════════════════════════════════════════════════════════
+          // SECTION 4: Report Metadata (De-emphasized, at bottom)
+          // ═══════════════════════════════════════════════════════════════
+          const SizedBox(height: 40),
+
+          Container(height: 1, color: AppColors.border),
+
+          const SizedBox(height: 16),
+
+          // Metadata row
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Text(
-                  patternName,
-                  style: theme.textTheme.titleLarge,
+              Text(
+                'Generated ${_formatDate(generatedAt)}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  color: AppColors.muted,
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _confidenceColor(confidence).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  confidence,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: _confidenceColor(confidence),
-                  ),
+              Text(
+                'Language-checked',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  color: AppColors.muted,
                 ),
               ),
             ],
           ),
 
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: 16),
 
-          // Learning impact
+          // Disclaimer
           Text(
-            'What this means',
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w500,
+            _report?['disclaimer'] ?? kDisclaimer,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w400,
+              color: AppColors.muted,
+              height: 1.5,
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            learningImpact,
-            style: theme.textTheme.bodyMedium,
+            textAlign: TextAlign.center,
           ),
 
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: 24),
 
-          // Support focus
-          Text(
-            'How to support',
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w500,
-            ),
+          // Return action
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            },
+            child: const Text('Return home'),
           ),
-          const SizedBox(height: 4),
-          Text(
-            supportFocus,
-            style: theme.textTheme.bodyMedium,
-          ),
+
+          const SizedBox(height: AppSpacing.lg),
         ],
       ),
     );
   }
 
-  Color _confidenceColor(String confidence) {
-    switch (confidence) {
-      case 'high':
-        return AppColors.primary;
-      case 'moderate':
-        return AppColors.textSecondary;
-      default:
-        return AppColors.border;
-    }
+  /// Section header - 16-17px Medium
+  Widget _buildSectionHeader(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 17,
+        fontWeight: FontWeight.w500,
+        color: AppColors.textPrimary,
+        height: 1.3,
+      ),
+    );
+  }
+
+  /// Body paragraph - 15px Regular, secondary color
+  Widget _buildParagraph(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w400,
+        color: AppColors.textSecondary,
+        height: 1.55,
+      ),
+    );
+  }
+
+  /// Pattern block - plain text, no cards, no confidence values
+  Widget _buildPatternBlock(dynamic pattern) {
+    final name = pattern['pattern_name'] as String? ?? 'Observed pattern';
+    final explanation = pattern['explanation'] as String? ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Pattern name as inline emphasis
+          Text(
+            name,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textPrimary,
+              height: 1.55,
+            ),
+          ),
+          if (explanation.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              explanation,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w400,
+                color: AppColors.textSecondary,
+                height: 1.55,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Support suggestion - short, neutral bullet point
+  Widget _buildSupportSuggestion(String text) {
+    // Split by sentence if multiple suggestions
+    final suggestions = text
+        .split(RegExp(r'(?<=[.!?])\s+'))
+        .where((s) => s.trim().isNotEmpty)
+        .toList();
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: suggestions.map((suggestion) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(
+                  width: 16,
+                  child: Text(
+                    '•',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: AppColors.textSecondary,
+                      height: 1.55,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    suggestion.trim(),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: AppColors.textSecondary,
+                      height: 1.55,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  /// Format date for metadata
+  String _formatDate(DateTime date) {
+    final months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 }

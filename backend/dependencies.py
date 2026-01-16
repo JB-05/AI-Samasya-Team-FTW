@@ -3,12 +3,16 @@
 # Shared FastAPI dependencies for all routes
 # =============================================================================
 #
-# REAL AUTH: Supabase JWT verification
+# Two auth modes:
+# 1. OBSERVER AUTH: Supabase JWT verification for parent/teacher app
+# 2. LEARNER CODE: No auth, code-based access for child app (write-only)
 #
 # =============================================================================
 
 from uuid import UUID
 from typing import Annotated, Optional
+from collections import defaultdict
+from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status, Header
 from pydantic import BaseModel
 import jwt
@@ -18,7 +22,41 @@ from .db.supabase import get_supabase, get_supabase_admin
 
 
 # =============================================================================
-# OBSERVER CONTEXT
+# RATE LIMITING (In-memory, simple implementation)
+# =============================================================================
+
+class RateLimiter:
+    """Simple in-memory rate limiter for learner code access."""
+    
+    def __init__(self, max_requests: int = 10, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests: dict[str, list[datetime]] = defaultdict(list)
+    
+    def is_allowed(self, key: str) -> bool:
+        """Check if request is allowed under rate limit."""
+        now = datetime.utcnow()
+        window_start = now - timedelta(seconds=self.window_seconds)
+        
+        # Clean old requests
+        self.requests[key] = [
+            t for t in self.requests[key] 
+            if t > window_start
+        ]
+        
+        if len(self.requests[key]) >= self.max_requests:
+            return False
+        
+        self.requests[key].append(now)
+        return True
+
+
+# Global rate limiter for learner code access
+learner_code_limiter = RateLimiter(max_requests=10, window_seconds=60)
+
+
+# =============================================================================
+# OBSERVER CONTEXT (Parent/Teacher App)
 # =============================================================================
 
 class Observer(BaseModel):
@@ -44,9 +82,6 @@ async def get_current_observer(
     Raises:
         401 if token invalid or missing
     """
-    # ==========================================================================
-    # Step 1: Extract JWT from Authorization header
-    # ==========================================================================
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -61,7 +96,7 @@ async def get_current_observer(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    token = authorization[7:]  # Remove "Bearer " prefix
+    token = authorization[7:]
     
     if not token:
         raise HTTPException(
@@ -70,9 +105,6 @@ async def get_current_observer(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # ==========================================================================
-    # Step 2: Verify JWT with Supabase
-    # ==========================================================================
     settings = get_settings_dev()
     if not settings:
         raise HTTPException(
@@ -81,12 +113,6 @@ async def get_current_observer(
         )
     
     try:
-        # Supabase JWT uses HS256 with the JWT secret
-        # The JWT secret is derived from the project's JWT secret in Supabase settings
-        # For anon key verification, we decode without verification and use Supabase to validate
-        
-        # Decode without verification first to get the user ID
-        # Then use Supabase client to verify the session is valid
         unverified_payload = jwt.decode(
             token,
             options={"verify_signature": False}
@@ -113,9 +139,6 @@ async def get_current_observer(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # ==========================================================================
-    # Step 3: Verify session with Supabase and get/create observer
-    # ==========================================================================
     supabase = get_supabase()
     if not supabase:
         raise HTTPException(
@@ -124,7 +147,6 @@ async def get_current_observer(
         )
     
     try:
-        # Verify the token is valid by getting the user
         user_response = supabase.auth.get_user(token)
         
         if not user_response or not user_response.user:
@@ -149,35 +171,25 @@ async def get_current_observer(
             detail=f"Authentication error: {str(e)}"
         )
     
-    # ==========================================================================
-    # Step 4: Get or create observer record
-    # ==========================================================================
     try:
-        # Try to get existing observer
         observer_result = supabase.table("observers").select("*").eq(
             "observer_id", str(observer_id)
         ).execute()
         
         if observer_result.data and len(observer_result.data) > 0:
-            # Observer exists
             observer_data = observer_result.data[0]
             return Observer(
                 observer_id=UUID(observer_data["observer_id"]),
                 role=observer_data["role"]
             )
         
-        # ==========================================================================
-        # Step 5: Auto-insert observer if missing (use admin client to bypass RLS)
-        # ==========================================================================
         supabase_admin = get_supabase_admin()
         if not supabase_admin:
-            # Fallback: return observer without DB record (will fail on FK constraints)
             return Observer(
                 observer_id=observer_id,
                 role="parent"
             )
         
-        # Default role is "parent" - can be changed later
         new_observer = {
             "observer_id": str(observer_id),
             "role": "parent"
@@ -191,15 +203,12 @@ async def get_current_observer(
                 role="parent"
             )
         
-        # If insert failed but no error, return with default role
         return Observer(
             observer_id=observer_id,
             role="parent"
         )
         
-    except Exception as e:
-        # If we can't access the observers table, still return the observer
-        # This handles cases where the table doesn't exist yet
+    except Exception:
         return Observer(
             observer_id=observer_id,
             role="parent"
@@ -208,6 +217,76 @@ async def get_current_observer(
 
 # Type alias for cleaner route signatures
 CurrentObserver = Annotated[Observer, Depends(get_current_observer)]
+
+
+# =============================================================================
+# LEARNER CODE CONTEXT (Child App)
+# =============================================================================
+
+class LearnerContext(BaseModel):
+    """Learner context resolved from learner_code."""
+    learner_id: UUID
+    # NOTE: observer_id is NOT exposed to child app
+
+
+async def get_learner_by_code(learner_code: str) -> LearnerContext:
+    """
+    Get learner context from learner_code.
+    
+    IMPORTANT:
+    - No authentication required
+    - Rate limited (10 requests per minute per code)
+    - Grants WRITE-ONLY session access
+    - Cannot read patterns, reports, or other data
+    
+    Args:
+        learner_code: The 8-character access code
+        
+    Returns:
+        LearnerContext with learner_id (internal use)
+        
+    Raises:
+        429 if rate limited
+        404 if code not found
+    """
+    # Rate limiting
+    if not learner_code_limiter.is_allowed(learner_code):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please wait before trying again."
+        )
+    
+    supabase = get_supabase_admin() or get_supabase()
+    
+    if not supabase:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service unavailable"
+        )
+    
+    try:
+        # Look up learner by code
+        result = supabase.table("learners").select("learner_id").eq(
+            "learner_code", learner_code.upper()
+        ).execute()
+        
+        if not result.data or len(result.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invalid code"
+            )
+        
+        return LearnerContext(
+            learner_id=UUID(result.data[0]["learner_id"])
+        )
+        
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Service error"
+        )
 
 
 # =============================================================================

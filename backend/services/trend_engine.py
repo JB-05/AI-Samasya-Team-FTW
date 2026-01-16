@@ -5,14 +5,10 @@
 
 from typing import Dict, List, Any, Optional
 from datetime import datetime, date, timedelta
+from uuid import UUID, uuid4
+from collections import defaultdict
 
-from ..schemas.pattern import PatternSnapshot, PatternCategory
-from ..schemas.trend import (
-    TrendPeriod,
-    TrendDirection,
-    PatternTrend,
-    TrendSummary,
-)
+from ..db.supabase import get_supabase_admin
 
 
 class TrendEngine:
@@ -26,160 +22,126 @@ class TrendEngine:
     - Works only with persisted pattern snapshots
     - Never accesses raw gameplay events
     - Provides trend direction without diagnostic labels
+    - Requires minimum 3 sessions
+    - Deterministic computation (no ML)
     """
     
-    def __init__(self):
-        """Initialize the trend engine."""
-        pass
+    MIN_SESSIONS_FOR_TRENDS = 3
     
-    def aggregate_trends(
-        self,
-        learner_id: str,
-        snapshots: List[PatternSnapshot],
-        period: TrendPeriod
-    ) -> TrendSummary:
+    def compute_trends_for_learner(self, learner_id: UUID) -> List[Dict]:
         """
-        Aggregate patterns into trend summary.
+        Compute trends for a learner based on pattern snapshots.
         
-        Args:
-            learner_id: ID of the learner
-            snapshots: Pattern snapshots to aggregate
-            period: Time period for aggregation
-            
+        Rules:
+        - Minimum 3 sessions required
+        - Group patterns by pattern_name
+        - Determine trend_type: 'stable', 'fluctuating', or 'improving'
+        
         Returns:
-            Trend summary for the period
+            List of trend summaries with pattern_name and trend_type
         """
-        import uuid
+        supabase = get_supabase_admin()
+        if not supabase:
+            return []
         
-        # TODO: Implement trend aggregation
-        # 1. Group snapshots by time period
-        # 2. Calculate averages for each pattern category
-        # 3. Compare with previous period
-        # 4. Determine trend direction
+        # Get all pattern snapshots for this learner, ordered by date
+        result = supabase.table("pattern_snapshots").select(
+            "snapshot_id, session_id, pattern_name, created_at"
+        ).eq("learner_id", str(learner_id)).order(
+            "created_at", desc=False
+        ).execute()
         
-        now = datetime.utcnow()
-        period_start, period_end = self._get_period_bounds(period, now.date())
+        if not result.data:
+            return []
         
-        # Filter snapshots for the period
-        period_snapshots = [
-            s for s in snapshots
-            if period_start <= s.created_at.date() <= period_end
-        ]
+        # Count unique sessions
+        unique_sessions = set(s["session_id"] for s in result.data)
+        if len(unique_sessions) < self.MIN_SESSIONS_FOR_TRENDS:
+            return []  # Insufficient data
         
-        # Calculate pattern trends
-        pattern_trends = self._calculate_pattern_trends(period_snapshots)
+        # Group snapshots by pattern_name
+        patterns_by_name: Dict[str, List[Dict]] = defaultdict(list)
+        for snapshot in result.data:
+            pattern_name = snapshot["pattern_name"]
+            patterns_by_name[pattern_name].append(snapshot)
         
-        # Determine overall direction
-        overall_direction = self._determine_overall_direction(pattern_trends)
-        
-        return TrendSummary(
-            id=str(uuid.uuid4()),
-            learner_id=learner_id,
-            period=period,
-            period_start=period_start,
-            period_end=period_end,
-            total_sessions=len(period_snapshots),
-            pattern_trends=pattern_trends,
-            overall_direction=overall_direction,
-            highlights=self._generate_highlights(pattern_trends),
-            updated_at=now
-        )
-    
-    def _get_period_bounds(
-        self, 
-        period: TrendPeriod, 
-        reference_date: date
-    ) -> tuple[date, date]:
-        """Get start and end dates for a period."""
-        if period == TrendPeriod.WEEK:
-            start = reference_date - timedelta(days=7)
-            end = reference_date
-        elif period == TrendPeriod.MONTH:
-            start = reference_date - timedelta(days=30)
-            end = reference_date
-        elif period == TrendPeriod.QUARTER:
-            start = reference_date - timedelta(days=90)
-            end = reference_date
-        elif period == TrendPeriod.YEAR:
-            start = reference_date - timedelta(days=365)
-            end = reference_date
-        else:  # ALL_TIME
-            start = date(2020, 1, 1)  # Arbitrary early date
-            end = reference_date
-        
-        return start, end
-    
-    def _calculate_pattern_trends(
-        self, 
-        snapshots: List[PatternSnapshot]
-    ) -> List[PatternTrend]:
-        """Calculate trends for each pattern category."""
         trends = []
         
-        # TODO: Implement per-category trend calculation
-        for category in PatternCategory:
-            trend = PatternTrend(
-                category=category,
-                direction=TrendDirection.INSUFFICIENT_DATA,
-                current_average=0.0,
-                session_count=len(snapshots),
-                data_points=[]
-            )
-            trends.append(trend)
+        # Compute trend for each pattern
+        for pattern_name, snapshots in patterns_by_name.items():
+            trend_type = self._determine_trend_type(snapshots, unique_sessions)
+            
+            # Upsert trend into database
+            trend_data = {
+                "learner_id": str(learner_id),
+                "pattern_name": pattern_name,
+                "trend_type": trend_type,
+                "session_count": len(set(s["session_id"] for s in snapshots)),
+            }
+            
+            # Use upsert to handle UNIQUE constraint
+            upsert_result = supabase.table("trend_summaries").upsert(
+                trend_data,
+                on_conflict="learner_id,pattern_name"
+            ).execute()
+            
+            if upsert_result.data:
+                trends.append({
+                    "pattern_name": pattern_name,
+                    "trend_type": trend_type,
+                })
         
         return trends
     
-    def _determine_overall_direction(
-        self, 
-        pattern_trends: List[PatternTrend]
-    ) -> TrendDirection:
-        """Determine overall trend direction from individual trends."""
-        # TODO: Implement weighted direction calculation
-        
-        if not pattern_trends:
-            return TrendDirection.INSUFFICIENT_DATA
-        
-        # Count directions
-        improving = sum(1 for t in pattern_trends if t.direction == TrendDirection.IMPROVING)
-        declining = sum(1 for t in pattern_trends if t.direction == TrendDirection.DECLINING)
-        
-        if improving > declining:
-            return TrendDirection.IMPROVING
-        elif declining > improving:
-            return TrendDirection.DECLINING
-        else:
-            return TrendDirection.STABLE
-    
-    def _generate_highlights(
-        self, 
-        pattern_trends: List[PatternTrend]
-    ) -> List[str]:
-        """Generate human-readable highlights from trends."""
-        # TODO: Implement highlight generation
-        # Should use non-diagnostic, growth-oriented language
-        return []
-    
-    def update_trends_for_session(
+    def _determine_trend_type(
         self,
-        learner_id: str,
-        new_snapshot: PatternSnapshot,
-        existing_summary: Optional[TrendSummary]
-    ) -> TrendSummary:
+        snapshots: List[Dict],
+        all_sessions: set
+    ) -> str:
         """
-        Incrementally update trends with a new session.
+        Determine trend type based on pattern consistency.
         
-        More efficient than recalculating from scratch.
+        Logic:
+        - stable: Pattern appears in >70% of recent sessions consistently
+        - fluctuating: Pattern appears in 30-70% of sessions or varies
+        - improving: Pattern appeared frequently early, less recently
         """
-        # TODO: Implement incremental trend update
-        # 1. Add new snapshot data to existing aggregates
-        # 2. Recalculate moving averages
-        # 3. Update trend directions
+        if len(snapshots) < 2:
+            return "fluctuating"
         
-        raise NotImplementedError("Incremental update not yet implemented")
+        # Sort snapshots by date
+        sorted_snapshots = sorted(
+            snapshots,
+            key=lambda s: s["created_at"]
+        )
+        
+        # Split into early and recent halves
+        mid_point = len(sorted_snapshots) // 2
+        early = sorted_snapshots[:mid_point]
+        recent = sorted_snapshots[mid_point:]
+        
+        # Count unique sessions per period
+        early_sessions = set(s["session_id"] for s in early)
+        recent_sessions = set(s["session_id"] for s in recent)
+        
+        # Total unique sessions for this pattern
+        pattern_sessions = set(s["session_id"] for s in snapshots)
+        pattern_frequency = len(pattern_sessions) / len(all_sessions) if all_sessions else 0
+        
+        # Determine trend
+        if pattern_frequency > 0.7:
+            # Pattern appears consistently → stable
+            return "stable"
+        elif len(recent_sessions) < len(early_sessions) * 0.7:
+            # Pattern appearing less recently → improving (less of a "problem")
+            return "improving"
+        else:
+            # Pattern varies → fluctuating
+            return "fluctuating"
 
 
 # Singleton instance
-_trend_engine: TrendEngine | None = None
+_trend_engine: Optional[TrendEngine] = None
 
 
 def get_trend_engine() -> TrendEngine:
@@ -188,8 +150,3 @@ def get_trend_engine() -> TrendEngine:
     if _trend_engine is None:
         _trend_engine = TrendEngine()
     return _trend_engine
-
-
-# TODO: Implement trend comparison across learners
-# TODO: Add anomaly detection for unusual patterns
-# TODO: Implement trend forecasting (with appropriate caveats)

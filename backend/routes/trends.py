@@ -1,41 +1,108 @@
-# Routes for longitudinal trend summaries
-# Aggregates pattern data across multiple sessions
+# =============================================================================
+# TRENDS API (Phase-Gated)
+# Longitudinal trend summaries - NOT YET AVAILABLE
+# =============================================================================
 #
-# NOTE: Trends are derived from pattern snapshots only
-# Raw gameplay data is NEVER used for trends
+# All routes return: {"status": "not_available"}
+#
+# Trends will aggregate pattern data across multiple sessions
+# when implemented in a future phase.
+#
+# =============================================================================
 
 from fastapi import APIRouter, HTTPException, status
-from typing import List, Optional
 from uuid import UUID
-from datetime import date, datetime
+from typing import Optional, List
+from datetime import date
+from pydantic import BaseModel
 
 from ..dependencies import CurrentObserver
-from ..utils.constants import DISCLAIMER_SHORT
+from ..db.supabase import get_supabase_admin
+from ..services.trend_engine import get_trend_engine
 
 router = APIRouter(prefix="/trends", tags=["trends"])
 
 
-@router.get("/learner/{learner_id}")
+# =============================================================================
+# RESPONSE SCHEMAS
+# =============================================================================
+
+class TrendItem(BaseModel):
+    """Single trend item - language only, no numbers."""
+    pattern_name: str
+    trend_type: str  # 'stable', 'fluctuating', or 'improving'
+
+
+class LearnerTrendsResponse(BaseModel):
+    """Trend response for a learner."""
+    learner_id: UUID
+    trends: List[TrendItem]
+    message: Optional[str] = None
+
+
+@router.get("/learner/{learner_id}", response_model=LearnerTrendsResponse)
 async def get_learner_trends(
     learner_id: UUID,
-    period: str = "month",  # week, month, quarter, year
-    observer: CurrentObserver = None
+    observer: CurrentObserver
 ):
     """
-    Get trend summary for a learner over a specified period.
+    Get trend summary for a learner.
     
-    Aggregates pattern data across sessions to show
-    learning trajectory over time.
+    Computes trends deterministically from pattern_snapshots.
+    Requires minimum 3 sessions.
+    
+    Returns:
+        pattern_name and trend_type for each pattern
+        No numbers, no charts, no metrics
     """
-    # TODO: Implement with actual data
-    return {
-        "learner_id": str(learner_id),
-        "period": period,
-        "trends": [],
-        "session_count": 0,
-        "message": "Trend analysis coming in Phase 2",
-        "disclaimer": DISCLAIMER_SHORT
-    }
+    supabase = get_supabase_admin()
+    if not supabase:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection unavailable"
+        )
+    
+    # Verify learner belongs to observer
+    learner_check = supabase.table("learners").select("learner_id").eq(
+        "learner_id", str(learner_id)
+    ).eq(
+        "observer_id", str(observer.observer_id)
+    ).execute()
+    
+    if not learner_check.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Learner not found"
+        )
+    
+    # Compute trends
+    try:
+        trend_engine = get_trend_engine()
+        trends = trend_engine.compute_trends_for_learner(learner_id)
+        
+        if not trends:
+            return LearnerTrendsResponse(
+                learner_id=learner_id,
+                trends=[],
+                message="Insufficient data. Trends require at least 3 sessions."
+            )
+        
+        trend_items = [
+            TrendItem(pattern_name=t["pattern_name"], trend_type=t["trend_type"])
+            for t in trends
+        ]
+        
+        return LearnerTrendsResponse(
+            learner_id=learner_id,
+            trends=trend_items
+        )
+        
+    except Exception as e:
+        print(f"[ERROR] Trend computation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to compute trends"
+        )
 
 
 @router.get("/learner/{learner_id}/history")
@@ -48,16 +115,9 @@ async def get_trend_history(
     """
     Get historical trend data for a learner.
     
-    Returns trend snapshots over time to visualize progress.
+    PHASE-GATED: Returns {"status": "not_available"}
     """
-    return {
-        "learner_id": str(learner_id),
-        "start_date": str(start_date) if start_date else None,
-        "end_date": str(end_date) if end_date else None,
-        "history": [],
-        "message": "Trend history coming in Phase 2",
-        "disclaimer": DISCLAIMER_SHORT
-    }
+    return PHASE_GATED_RESPONSE
 
 
 @router.get("/learner/{learner_id}/patterns/{pattern_name}")
@@ -69,30 +129,16 @@ async def get_pattern_trends(
     """
     Get trend data for a specific pattern type.
     
-    Shows how a particular pattern has evolved over time.
+    PHASE-GATED: Returns {"status": "not_available"}
     """
-    return {
-        "learner_id": str(learner_id),
-        "pattern_name": pattern_name,
-        "trend_data": [],
-        "message": "Pattern trends coming in Phase 2",
-        "disclaimer": DISCLAIMER_SHORT
-    }
+    return PHASE_GATED_RESPONSE
 
 
 @router.get("/overview")
 async def get_observer_overview(observer: CurrentObserver):
     """
-    Get trend overview for all learners under the observer.
+    Get trend overview for all learners.
     
-    Provides a dashboard view of all learners' progress.
+    PHASE-GATED: Returns {"status": "not_available"}
     """
-    return {
-        "observer_id": str(observer.observer_id),
-        "learner_summaries": [],
-        "total_learners": 0,
-        "total_sessions": 0,
-        "generated_at": datetime.utcnow().isoformat(),
-        "message": "Observer overview coming in Phase 2",
-        "disclaimer": DISCLAIMER_SHORT
-    }
+    return PHASE_GATED_RESPONSE

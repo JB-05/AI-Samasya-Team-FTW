@@ -21,18 +21,18 @@ void main() async {
     anonKey: supabaseAnonKey,
   );
   
-  runApp(const MyApp());
+  runApp(const NeuroPlayApp());
 }
 
 SupabaseClient get supabase => Supabase.instance.client;
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class NeuroPlayApp extends StatelessWidget {
+  const NeuroPlayApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AI Samasya',
+      title: 'NeuroPlay',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       home: const AuthGate(),

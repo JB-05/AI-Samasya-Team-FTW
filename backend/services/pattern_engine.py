@@ -57,9 +57,8 @@ def infer_pattern(features: FocusTapFeatures) -> Optional[PatternResult]:
                 "Consistent routines may help maintain engagement."
             ),
             explanation=(
-                f"Reaction times varied notably (average {features.mean_reaction_time_ms:.0f}ms, "
-                f"variability {features.reaction_time_std_ms:.0f}ms). "
-                "This is a common pattern that many learners show."
+                "Response timing varied across the activity, which is a common observation "
+                "during learning tasks. This pattern is typical for many learners."
             )
         )
     
@@ -79,8 +78,8 @@ def infer_pattern(features: FocusTapFeatures) -> Optional[PatternResult]:
                 "Celebrate successful responses."
             ),
             explanation=(
-                f"Missed {features.miss_rate*100:.0f}% of targets. "
-                "This suggests the learner is still building visual tracking skills."
+                "Response accuracy varied during the activity, which suggests the learner "
+                "is developing visual tracking skills. This is expected during skill building."
             )
         )
     
@@ -99,7 +98,7 @@ def infer_pattern(features: FocusTapFeatures) -> Optional[PatternResult]:
             "age-appropriate engagement."
         ),
         explanation=(
-            f"Responses were consistent (average {features.mean_reaction_time_ms:.0f}ms) "
-            f"with {features.hit_count} successful responses out of {features.total_events} attempts."
+            "Responses were consistent throughout the activity, with successful engagement "
+            "observed across the task. This indicates steady focus and participation."
         )
     )

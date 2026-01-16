@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import '../theme/design_tokens.dart';
+import '../theme/animation_tokens.dart';
 import 'home_screen.dart';
 import 'how_it_works_screen.dart';
 import 'profile_screen.dart';
 
 /// Main app shell with bottom navigation.
-/// Contains: Home, How it Works, Profile tabs.
+/// Smooth fade transitions between tabs.
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -16,18 +17,33 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _currentIndex = 0;
 
-  final List<Widget> _screens = const [
-    HomeScreen(),
-    HowItWorksScreen(),
-    ProfileScreen(),
-  ];
+  Widget _buildScreen(int index) {
+    switch (index) {
+      case 0:
+        return const HomeScreen(key: ValueKey('home'));
+      case 1:
+        return const HowItWorksScreen(key: ValueKey('about'));
+      case 2:
+        return const ProfileScreen(key: ValueKey('profile'));
+      default:
+        return const HomeScreen(key: ValueKey('home'));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
+      body: AnimatedSwitcher(
+        duration: kCrossFadeDuration,
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: child,
+          );
+        },
+        child: _buildScreen(_currentIndex),
       ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
@@ -40,10 +56,6 @@ class _HomeShellState extends State<HomeShell> {
           onDestinationSelected: (index) {
             setState(() => _currentIndex = index);
           },
-          backgroundColor: AppColors.surface,
-          indicatorColor: AppColors.primary.withOpacity(0.15),
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          height: 65,
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.home_outlined),
@@ -51,9 +63,9 @@ class _HomeShellState extends State<HomeShell> {
               label: 'Home',
             ),
             NavigationDestination(
-              icon: Icon(Icons.help_outline),
-              selectedIcon: Icon(Icons.help),
-              label: 'How it works',
+              icon: Icon(Icons.info_outline),
+              selectedIcon: Icon(Icons.info),
+              label: 'About',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline),

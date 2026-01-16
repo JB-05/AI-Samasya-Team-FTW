@@ -1,22 +1,25 @@
 # Session schemas for the minimal intelligence loop
-from pydantic import BaseModel
+# Separate schemas for Observer (parent/teacher) and Child app
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 
 
+# =============================================================================
+# OBSERVER (Parent/Teacher App) Session Schemas
+# Requires authentication
+# =============================================================================
+
 class SessionStart(BaseModel):
-    """Request to start a new game session."""
+    """Request to start a new game session (Observer app)."""
     learner_id: UUID
-    game_type: str = "focus_tap"  # Only one game for now
+    game_type: str = "focus_tap"
 
 
 class SessionStartResponse(BaseModel):
-    """Response after starting a session."""
+    """Response after starting a session (Observer app)."""
     session_id: UUID
-    learner_id: UUID
-    game_type: str
-    message: str
 
 
 class TapEvent(BaseModel):
@@ -38,21 +41,64 @@ class EventLog(BaseModel):
     events: List[TapEvent]
 
 
-class SessionComplete(BaseModel):
-    """Request to complete a session."""
-    # No additional data needed - events already logged
-
-
 class SessionCompleteResponse(BaseModel):
-    """Response after completing a session."""
-    session_id: UUID
-    total_events: int
-    pattern_detected: Optional[str]
-    message: str
+    """Response after completing a session.
+    
+    SIMPLIFIED: Returns only status, no metrics or patterns.
+    Child app should not receive analysis results.
+    """
+    status: str = "ok"
 
+
+# =============================================================================
+# CHILD APP Session Schemas
+# NO authentication - uses learner_code only
+# =============================================================================
+
+class ChildSessionStart(BaseModel):
+    """
+    Request to start a session from child app.
+    
+    IMPORTANT:
+    - Uses learner_code, NOT learner_id
+    - learner_code grants WRITE-ONLY access
+    - No authentication required
+    """
+    learner_code: str = Field(
+        ...,
+        min_length=8,
+        max_length=10,
+        description="Unique learner access code"
+    )
+    game_type: str = "focus_tap"
+
+
+class ChildSessionStartResponse(BaseModel):
+    """
+    Response after starting a session from child app.
+    
+    MINIMAL: Returns only session_id.
+    Does NOT expose learner_id to child app.
+    """
+    session_id: UUID
+
+
+class ChildSessionCompleteResponse(BaseModel):
+    """
+    Response after completing a session from child app.
+    
+    MINIMAL: Returns only status.
+    No metrics, patterns, or analysis returned to child.
+    """
+    status: str = "ok"
+
+
+# =============================================================================
+# Internal/Status Schemas (Observer only)
+# =============================================================================
 
 class SessionStatus(BaseModel):
-    """Current session status."""
+    """Current session status (Observer app only)."""
     session_id: UUID
     learner_id: UUID
     game_type: str

@@ -45,12 +45,34 @@ class LearnerRead(BaseModel):
     """
     Schema for learner data in responses.
     
-    NOTE: Does NOT expose observer_id to client.
-    Client only sees their own learners via RLS.
+    UI-Aligned: Returns minimal fields needed for display.
+    Includes learner_code for context screen display.
+    Does NOT include:
+    - session counts
+    - last activity timestamps
+    - derived stats
     """
     learner_id: UUID
     alias: str
+    learner_code: str  # Included for context screen display
     created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class LearnerCreateResponse(BaseModel):
+    """
+    Response after creating a new learner.
+    
+    IMPORTANT: learner_code is returned ONCE here.
+    Parent/teacher must save it - it is not shown again.
+    """
+    learner_id: UUID
+    alias: str
+    learner_code: str  # Shown ONCE on creation
+    created_at: datetime
+    message: str = "Save this code - it will not be shown again."
     
     class Config:
         from_attributes = True
@@ -90,6 +112,7 @@ class LearnerInternal(BaseModel):
     learner_id: UUID
     observer_id: UUID
     alias: str
+    learner_code: str
     created_at: datetime
     
     class Config:
