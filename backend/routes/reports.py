@@ -246,3 +246,49 @@ async def get_ai_report(report_id: UUID, observer: CurrentObserver):
         "generation_method": report["generation_method"],
         "disclaimer": DISCLAIMER_SHORT
     }
+
+
+@router.get("/learner/{learner_id}/latest")
+async def get_latest_report_id(learner_id: UUID, observer: CurrentObserver):
+    """
+    Get the latest AI-generated report_id for a learner.
+    
+    Returns the most recent approved or rewritten report for the learner.
+    Used to navigate to the AI-generated report view.
+    """
+    supabase = get_supabase_admin() or get_supabase()
+    if not supabase:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database connection error"
+        )
+    
+    # Verify learner belongs to observer
+    learner_check = supabase.table("learners").select("learner_id").eq(
+        "learner_id", str(learner_id)
+    ).eq(
+        "observer_id", str(observer.observer_id)
+    ).execute()
+    
+    if not learner_check.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Learner not found"
+        )
+    
+    # Get latest approved/rewritten report
+    result = supabase.table("reports").select("report_id").eq(
+        "learner_id", str(learner_id)
+    ).in_(
+        "validation_status", ["approved", "rewritten"]
+    ).order("created_at", desc=True).limit(1).execute()
+    
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No report found for this learner"
+        )
+    
+    return {
+        "report_id": result.data[0]["report_id"]
+    }

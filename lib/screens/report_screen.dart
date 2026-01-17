@@ -13,14 +13,16 @@ import '../widgets/skeleton.dart';
 class ReportScreen extends StatefulWidget {
   final String? sessionId;
   final String? learnerId;
+  final String? reportId; // AI-generated report ID
   final String learnerAlias;
 
   const ReportScreen({
     super.key,
     this.sessionId,
     this.learnerId,
+    this.reportId,
     required this.learnerAlias,
-  }) : assert(sessionId != null || learnerId != null, 'Either sessionId or learnerId must be provided');
+  }) : assert(sessionId != null || learnerId != null || reportId != null, 'Either sessionId, learnerId, or reportId must be provided');
 
   @override
   State<ReportScreen> createState() => _ReportScreenState();
@@ -49,9 +51,13 @@ class _ReportScreenState extends State<ReportScreen> {
         return;
       }
 
-      // Use appropriate endpoint based on whether sessionId or learnerId is provided
+      // Use appropriate endpoint based on what's provided
+      // Priority: reportId (AI report) > sessionId > learnerId
       final String endpoint;
-      if (widget.sessionId != null) {
+      if (widget.reportId != null) {
+        // Fetch AI-generated report
+        endpoint = '$backendUrl/api/reports/ai/${widget.reportId}';
+      } else if (widget.sessionId != null) {
         endpoint = '$backendUrl/api/reports/session/${widget.sessionId}';
       } else if (widget.learnerId != null) {
         endpoint = '$backendUrl/api/reports/learner/${widget.learnerId}';
@@ -142,7 +148,10 @@ class _ReportScreenState extends State<ReportScreen> {
       );
     }
 
+    // Check if this is an AI-generated report (has 'content' field)
+    final isAiReport = widget.reportId != null && _report?['content'] != null;
     final patterns = _report?['patterns'] as List? ?? [];
+    final aiContent = _report?['content'] as String?;
     final generatedAt = DateTime.now(); // Would come from backend in production
 
     // Fade in entire content at once
@@ -158,9 +167,9 @@ class _ReportScreenState extends State<ReportScreen> {
           // ═══════════════════════════════════════════════════════════════
           // SCREEN TITLE
           // ═══════════════════════════════════════════════════════════════
-          const Text(
-            'Learning Summary',
-            style: TextStyle(
+          Text(
+            isAiReport ? 'Learning Report' : 'Learning Summary',
+            style: const TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w600,
               color: AppColors.textPrimary,
@@ -172,7 +181,7 @@ class _ReportScreenState extends State<ReportScreen> {
           const SizedBox(height: 6),
 
           Text(
-            'Based on recent learning activities',
+            isAiReport ? 'AI-generated narrative report' : 'Based on recent learning activities',
             style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w400,
@@ -187,21 +196,31 @@ class _ReportScreenState extends State<ReportScreen> {
           Container(height: 1, color: AppColors.border),
 
           // ═══════════════════════════════════════════════════════════════
-          // SECTION 1: Observed Patterns (Mandatory first)
+          // AI-GENERATED REPORT CONTENT (if reportId provided)
           // ═══════════════════════════════════════════════════════════════
-          const SizedBox(height: 28),
+          if (isAiReport && aiContent != null) ...[
+            const SizedBox(height: 28),
 
-          _buildSectionHeader('Observed patterns'),
+            // Display AI-generated narrative content
+            _buildAiReportContent(aiContent),
 
-          const SizedBox(height: 10),
+          ] else ...[
+            // ═══════════════════════════════════════════════════════════════
+            // SECTION 1: Observed Patterns (Mandatory first) - For pattern-based reports
+            // ═══════════════════════════════════════════════════════════════
+            const SizedBox(height: 28),
 
-          if (patterns.isEmpty)
-            _buildParagraph(
-              'No specific patterns were observed during this activity. '
-              'Responses were within typical ranges.',
-            )
-          else
-            ...patterns.map((p) => _buildPatternBlock(p)),
+            _buildSectionHeader('Observed patterns'),
+
+            const SizedBox(height: 10),
+
+            if (patterns.isEmpty)
+              _buildParagraph(
+                'No specific patterns were observed during this activity. '
+                'Responses were within typical ranges.',
+              )
+            else
+              ...patterns.map((p) => _buildPatternBlock(p)),
 
           // ═══════════════════════════════════════════════════════════════
           // SECTION 2: What This May Affect
@@ -238,6 +257,7 @@ class _ReportScreenState extends State<ReportScreen> {
               if (support == null || support.isEmpty) return const SizedBox.shrink();
               return _buildSupportSuggestion(support);
             }),
+          ],
           ],
 
           // ═══════════════════════════════════════════════════════════════
@@ -276,7 +296,7 @@ class _ReportScreenState extends State<ReportScreen> {
 
           // Disclaimer
           Text(
-            _report?['disclaimer'] ?? kDisclaimer,
+            _report?['disclaimer'] ?? 'Observational insights only. Not a diagnostic tool.',
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w400,
@@ -312,6 +332,26 @@ class _ReportScreenState extends State<ReportScreen> {
         color: AppColors.textPrimary,
         height: 1.3,
       ),
+    );
+  }
+
+  /// AI-generated report content display
+  Widget _buildAiReportContent(String content) {
+    // Split content into paragraphs (by double newlines or single newlines)
+    final paragraphs = content.split(RegExp(r'\n\n+')).where((p) => p.trim().isNotEmpty).toList();
+    
+    if (paragraphs.isEmpty) {
+      return _buildParagraph(content);
+    }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: paragraphs.map((para) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _buildParagraph(para.trim()),
+        );
+      }).toList(),
     );
   }
 

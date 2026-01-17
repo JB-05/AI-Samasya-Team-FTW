@@ -28,6 +28,7 @@ class LearnerContextScreen extends StatefulWidget {
 
 class _LearnerContextScreenState extends State<LearnerContextScreen> {
   Map<String, dynamic>? _report;
+  Map<String, dynamic>? _metrics;
   String? _learnerCode;
   bool _isLoading = true;
   bool _contentVisible = false;
@@ -79,15 +80,29 @@ class _LearnerContextScreenState extends State<LearnerContextScreen> {
         },
       );
 
+      // Fetch learner metrics
+      final metricsResponse = await http.get(
+        Uri.parse('$backendUrl/api/learners/${widget.learnerId}/metrics'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
       if (mounted) {
         if (reportResponse.statusCode == 200) {
           setState(() {
             _report = json.decode(reportResponse.body);
-            _isLoading = false;
           });
-        } else {
-          setState(() => _isLoading = false);
         }
+        
+        if (metricsResponse.statusCode == 200) {
+          setState(() {
+            _metrics = json.decode(metricsResponse.body);
+          });
+        }
+        
+        setState(() => _isLoading = false);
 
         // Trigger fade-in after load
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -361,20 +376,49 @@ class _LearnerContextScreenState extends State<LearnerContextScreen> {
                     padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
                     child: Row(
                       children: [
-                        // View Full Report button (if report exists)
-                        if (_report != null && (_report?['patterns'] as List? ?? []).isNotEmpty)
+                        // View Full Report button (if report exists or generated)
+                        if (_report != null || _generatedReportId != null) ...[
                           Expanded(
                             child: OutlinedButton.icon(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => ReportScreen(
-                                      learnerId: widget.learnerId,
-                                      learnerAlias: widget.learnerAlias,
+                              onPressed: () async {
+                                String? reportIdToUse = _generatedReportId;
+                                
+                                // If no stored reportId, fetch latest
+                                if (reportIdToUse == null) {
+                                  final token = await _getToken();
+                                  if (token != null) {
+                                    try {
+                                      final response = await http.get(
+                                        Uri.parse('$backendUrl/api/reports/learner/${widget.learnerId}/latest'),
+                                        headers: {
+                                          'Authorization': 'Bearer $token',
+                                          'Content-Type': 'application/json',
+                                        },
+                                      );
+                                      
+                                      if (response.statusCode == 200) {
+                                        final data = json.decode(response.body);
+                                        reportIdToUse = data['report_id'] as String?;
+                                      }
+                                    } catch (e) {
+                                      // Ignore error, will fall back to pattern report
+                                    }
+                                  }
+                                }
+                                
+                                // Navigate to report screen
+                                if (mounted) {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => ReportScreen(
+                                        learnerId: widget.learnerId,
+                                        learnerAlias: widget.learnerAlias,
+                                        reportId: reportIdToUse,
+                                      ),
                                     ),
-                                  ),
-                                );
+                                  );
+                                }
                               },
                               icon: const Icon(Icons.visibility_outlined, size: 18),
                               label: const Text('View Full Report'),
@@ -394,9 +438,9 @@ class _LearnerContextScreenState extends State<LearnerContextScreen> {
                               ),
                             ),
                           ),
-                        if (_report != null && (_report?['patterns'] as List? ?? []).isNotEmpty)
                           const SizedBox(width: AppSpacing.sm),
-                        // Generate Report button
+                        ],
+                        // Generate Report button (always visible)
                         Expanded(
                           child: ElevatedButton(
                             onPressed: _isGeneratingReport ? null : _generateReport,
@@ -441,6 +485,16 @@ class _LearnerContextScreenState extends State<LearnerContextScreen> {
                   ),
 
                   const SizedBox(height: 28),
+
+                  // ═══════════════════════════════════════════════════════════
+                  // Metrics Section (only in profile, not in AI reports)
+                  // ═══════════════════════════════════════════════════════════
+                  if (_metrics != null) ...[
+                    _buildSectionHeader('Activity Insights'),
+                    const SizedBox(height: 10),
+                    _buildMetricsSection(),
+                    const SizedBox(height: 28),
+                  ],
 
                   // ═══════════════════════════════════════════════════════════
                   // Section 1: Observed Patterns
@@ -611,6 +665,257 @@ class _LearnerContextScreenState extends State<LearnerContextScreen> {
           );
         }).toList(),
       ),
+    );
+  }
+
+  Widget _buildMetricsSection() {
+    if (_metrics == null) return const SizedBox.shrink();
+    
+    final sessionCount = _metrics!['session_count'] as int? ?? 0;
+    final patternCount = _metrics!['pattern_count'] as int? ?? 0;
+    final avgPatterns = _metrics!['avg_patterns_per_session'] as double? ?? 0.0;
+    final mostCommonPattern = _metrics!['most_common_pattern'] as String?;
+    
+    // New metrics from backend
+    final patternVariety = (_metrics!['pattern_variety'] as num?)?.toDouble() ?? 0.0;
+    final confidenceScore = (_metrics!['confidence_score'] as num?)?.toDouble() ?? 0.0;
+    final recentActivityRate = (_metrics!['recent_activity_rate'] as num?)?.toDouble() ?? 0.0;
+    final sessionsPerWeek = (_metrics!['sessions_per_week'] as num?)?.toDouble() ?? 0.0;
+    final consistencyScore = (_metrics!['consistency_score'] as num?)?.toDouble() ?? 0.0;
+    
+    // Calculate percentages (normalize to 0-100)
+    // Activity Level: sessions / 20 (assuming 20 is a good benchmark)
+    final activityLevel = (sessionCount / 20 * 100).clamp(0.0, 100.0);
+    
+    // Pattern Detection Rate: patterns / 10 (assuming 10 is a good benchmark)
+    final patternRate = (patternCount / 10 * 100).clamp(0.0, 100.0);
+    
+    // Engagement Score: avg patterns per session / 2 (assuming 2 is good)
+    final engagementScore = (avgPatterns / 2 * 100).clamp(0.0, 100.0);
+    
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Activity Level
+          _buildMetricProgressBar(
+            icon: Icons.play_circle_outline,
+            label: 'Activity Level',
+            value: sessionCount,
+            percentage: activityLevel,
+            color: AppColors.primary,
+            suffix: 'sessions',
+          ),
+          const SizedBox(height: 20),
+          
+          // Pattern Detection Rate
+          _buildMetricProgressBar(
+            icon: Icons.insights_outlined,
+            label: 'Pattern Detection',
+            value: patternCount,
+            percentage: patternRate,
+            color: AppColors.secondary,
+            suffix: 'patterns',
+          ),
+          const SizedBox(height: 20),
+          
+          // Engagement Score
+          _buildMetricProgressBar(
+            icon: Icons.trending_up_outlined,
+            label: 'Engagement Score',
+            value: avgPatterns,
+            percentage: engagementScore,
+            color: const Color(0xFF8E9AAF), // Accent color
+            suffix: 'avg/session',
+            isDecimal: true,
+          ),
+          const SizedBox(height: 20),
+          
+          // Pattern Variety
+          _buildMetricProgressBar(
+            icon: Icons.category_outlined,
+            label: 'Pattern Variety',
+            value: patternVariety,
+            percentage: patternVariety.clamp(0.0, 100.0),
+            color: const Color(0xFF6B8E23), // Olive green
+            suffix: '% unique',
+            isDecimal: true,
+          ),
+          const SizedBox(height: 20),
+          
+          // Confidence Score
+          _buildMetricProgressBar(
+            icon: Icons.check_circle_outline,
+            label: 'Pattern Confidence',
+            value: confidenceScore,
+            percentage: confidenceScore.clamp(0.0, 100.0),
+            color: const Color(0xFF4A90E2), // Blue
+            suffix: '% weighted',
+            isDecimal: true,
+          ),
+          const SizedBox(height: 20),
+          
+          // Recent Activity Rate
+          _buildMetricProgressBar(
+            icon: Icons.schedule_outlined,
+            label: 'Recent Activity',
+            value: recentActivityRate,
+            percentage: recentActivityRate.clamp(0.0, 100.0),
+            color: const Color(0xFFE67E22), // Orange
+            suffix: '% (30 days)',
+            isDecimal: true,
+          ),
+          const SizedBox(height: 20),
+          
+          // Sessions per Week
+          _buildMetricProgressBar(
+            icon: Icons.calendar_today_outlined,
+            label: 'Session Frequency',
+            value: sessionsPerWeek,
+            percentage: (sessionsPerWeek / 3 * 100).clamp(0.0, 100.0), // Normalize to 3/week = 100%
+            color: const Color(0xFF9B59B6), // Purple
+            suffix: 'per week',
+            isDecimal: true,
+          ),
+          const SizedBox(height: 20),
+          
+          // Consistency Score
+          _buildMetricProgressBar(
+            icon: Icons.repeat_outlined,
+            label: 'Pattern Consistency',
+            value: consistencyScore,
+            percentage: consistencyScore.clamp(0.0, 100.0),
+            color: const Color(0xFF16A085), // Teal
+            suffix: '% stable',
+            isDecimal: true,
+          ),
+          
+          // Most common pattern (if available)
+          if (mostCommonPattern != null) ...[
+            const SizedBox(height: 20),
+            const Divider(height: 1, color: AppColors.border),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Icon(
+                  Icons.star_outline,
+                  size: 18,
+                  color: AppColors.secondary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Most Common Pattern',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        mostCommonPattern,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricProgressBar({
+    required IconData icon,
+    required String label,
+    required num value,
+    required double percentage,
+    required Color color,
+    required String suffix,
+    bool isDecimal = false,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Label row with icon
+        Row(
+          children: [
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            Text(
+              isDecimal ? '${value.toStringAsFixed(1)} $suffix' : '$value $suffix',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        
+        // Progress bar
+        Stack(
+          children: [
+            // Background bar
+            Container(
+              height: 8,
+              decoration: BoxDecoration(
+                color: AppColors.border.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            // Fill bar
+            FractionallySizedBox(
+              widthFactor: percentage / 100,
+              child: Container(
+                height: 8,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        
+        // Percentage text
+        Text(
+          '${percentage.toStringAsFixed(0)}%',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: color,
+          ),
+        ),
+      ],
     );
   }
 }
