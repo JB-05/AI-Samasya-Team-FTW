@@ -11,14 +11,16 @@ import '../widgets/skeleton.dart';
 /// Interpretive safety through structure
 /// Explains observed patterns in clear, non-diagnostic language
 class ReportScreen extends StatefulWidget {
-  final String sessionId;
+  final String? sessionId;
+  final String? learnerId;
   final String learnerAlias;
 
   const ReportScreen({
     super.key,
-    required this.sessionId,
+    this.sessionId,
+    this.learnerId,
     required this.learnerAlias,
-  });
+  }) : assert(sessionId != null || learnerId != null, 'Either sessionId or learnerId must be provided');
 
   @override
   State<ReportScreen> createState() => _ReportScreenState();
@@ -47,8 +49,22 @@ class _ReportScreenState extends State<ReportScreen> {
         return;
       }
 
+      // Use appropriate endpoint based on whether sessionId or learnerId is provided
+      final String endpoint;
+      if (widget.sessionId != null) {
+        endpoint = '$backendUrl/api/reports/session/${widget.sessionId}';
+      } else if (widget.learnerId != null) {
+        endpoint = '$backendUrl/api/reports/learner/${widget.learnerId}';
+      } else {
+        setState(() {
+          _error = 'Invalid report parameters';
+          _isLoading = false;
+        });
+        return;
+      }
+
       final response = await http.get(
-        Uri.parse('$backendUrl/api/reports/session/${widget.sessionId}'),
+        Uri.parse(endpoint),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',

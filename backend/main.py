@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 
 from .config import get_settings_dev
-from .routes import auth, learners, sessions, reports, trends
+from .routes import auth, learners, sessions, reports, trends, chat
 from .routes.health import router as health_router
 from .routes import reports_generate
 from .utils.ttl_cleanup import start_cleanup_scheduler
@@ -121,6 +121,7 @@ app.include_router(sessions.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(reports_generate.router, prefix="/api")
 app.include_router(trends.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
 
 
 @app.get("/")

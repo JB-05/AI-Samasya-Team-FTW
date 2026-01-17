@@ -51,8 +51,10 @@ class ReportValidator:
         # Initialize Gemini client if key is available
         if self.settings and self.settings.gemini_key:
             genai.configure(api_key=self.settings.gemini_key)
+            # Use same model as generator for consistency
+            model_name = 'gemini-flash-latest'
             self._client = genai.GenerativeModel(
-                'gemini-1.5-flash',
+                model_name,  # Try latest Flash model (may have better free tier support)
                 generation_config={
                     'temperature': 0.1,  # Very low temperature for strict validation
                     'max_output_tokens': 800,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/design_tokens.dart';
 import '../theme/animation_tokens.dart';
+import '../widgets/chat_button.dart';
 import 'home_screen.dart';
 import 'how_it_works_screen.dart';
 import 'profile_screen.dart';
@@ -33,17 +34,23 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: AnimatedSwitcher(
-        duration: kCrossFadeDuration,
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeIn,
-        transitionBuilder: (child, animation) {
-          return FadeTransition(
-            opacity: animation,
-            child: child,
-          );
-        },
-        child: _buildScreen(_currentIndex),
+      body: Stack(
+        children: [
+          AnimatedSwitcher(
+            duration: kCrossFadeDuration,
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: child,
+              );
+            },
+            child: _buildScreen(_currentIndex),
+          ),
+          // Floating chat button (available on all screens)
+          const ChatButton(),
+        ],
       ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(

@@ -42,14 +42,31 @@ class ReportGenerator:
         
         # Initialize Gemini client if key is available
         if self.settings and self.settings.gemini_key:
-            genai.configure(api_key=self.settings.gemini_key)
-            self._client = genai.GenerativeModel(
-                'gemini-1.5-flash',  # Use flash model for faster responses
-                generation_config={
-                    'temperature': 0.25,  # Low temperature for consistent, calm output
-                    'max_output_tokens': 600,
-                }
-            )
+            # Validate API key format
+            if not self.settings.gemini_key or len(self.settings.gemini_key) < 10:
+                print("[WARNING] GEMINI_KEY appears invalid (too short or empty)")
+                return
+            
+            try:
+                genai.configure(api_key=self.settings.gemini_key)
+                # Try gemini-flash-latest first (may have different quota than versioned models)
+                # Fallback to other models if needed
+                model_name = 'gemini-flash-latest'
+                self._client = genai.GenerativeModel(
+                    model_name,  # Try latest Flash model (may have better free tier support)
+                    generation_config={
+                        'temperature': 0.25,  # Low temperature for consistent, calm output
+                        'max_output_tokens': 600,
+                    }
+                )
+            except Exception as e:
+                print(f"[WARNING] Failed to initialize Gemini client: {e}")
+                self._client = None
+        else:
+            if not self.settings:
+                print("[WARNING] Settings not loaded - GEMINI_KEY may not be configured")
+            elif not self.settings.gemini_key:
+                print("[WARNING] GEMINI_KEY not found in environment. Report generation will fail.")
     
     def _load_system_prompt(self) -> None:
         """Load static system prompt from file."""
@@ -96,7 +113,21 @@ End with: "Observational insights only. This is not a diagnostic assessment."
             Dict with report_id and status
         """
         if not self._client:
-            raise ValueError("Gemini API key not configured. Cannot generate reports.")
+            if not self.settings:
+                raise ValueError(
+                    "Configuration not loaded. Please check your .env file exists in the root directory."
+                )
+            elif not self.settings.gemini_key:
+                raise ValueError(
+                    "GEMINI_KEY not found in environment variables. "
+                    "Please set GEMINI_KEY in your .env file. "
+                    "Get your key from: https://aistudio.google.com/app/apikey"
+                )
+            else:
+                raise ValueError(
+                    "Gemini client not initialized. API key may be invalid. "
+                    f"Key length: {len(self.settings.gemini_key) if self.settings.gemini_key else 0}"
+                )
         
         if scope == 'session' and not session_id:
             raise ValueError("session_id required when scope='session'")
@@ -112,18 +143,40 @@ End with: "Observational insights only. This is not a diagnostic assessment."
         # Build safe input for Gemini (NO metrics, NO raw data)
         safe_input = self._build_safe_input(patterns, trends, audience)
         
-        # Generate report via Gemini
-        try:
-            report_content = self._call_gemini(safe_input)
-        except Exception as e:
-            print(f"[ERROR] Gemini generation failed: {e}")
-            raise ValueError(f"Failed to generate report: {str(e)}")
+        # Generate report via Gemini (with fallback to template if quota/billing issues)
+        report_content = None
+        use_template = False
+        
+        if self._client:
+            try:
+                report_content = self._call_gemini(safe_input)
+            except Exception as e:
+                error_str = str(e)
+                print(f"[WARNING] Gemini generation failed: {e}")
+                
+                # If quota/billing error, use template-based fallback instead of failing
+                if "429" in error_str or "quota" in error_str.lower() or "limit: 0" in error_str:
+                    print("[INFO] Billing/quota issue detected. Using template-based report generation (no AI required)")
+                    use_template = True
+                elif "API_KEY" in error_str.upper() or "API key" in error_str:
+                    # API key errors - also use template so app doesn't break
+                    print("[INFO] API key issue. Using template-based report generation")
+                    use_template = True
+                else:
+                    # For other errors, also try template fallback
+                    print("[INFO] API error. Using template-based report generation")
+                    use_template = True
+        
+        # If Gemini not available or failed, generate template-based report
+        if use_template or not self._client:
+            print("[INFO] Generating template-based report (no AI required)")
+            report_content = self._generate_template_report(patterns, trends, audience)
         
         # Validate output safety
         is_safe, violations = validate_output_safety(report_content)
-        validation_status = 'pending' if is_safe else 'rejected'
+        validation_status = 'approved' if (use_template or not self._client) else ('pending' if is_safe else 'rejected')
         
-        if not is_safe:
+        if not is_safe and not use_template:
             print(f"[WARNING] Report contains prohibited terms: {violations}")
             # Still save as rejected for review
         
@@ -132,6 +185,9 @@ End with: "Observational insights only. This is not a diagnostic assessment."
         if disclaimer.lower() not in report_content.lower():
             report_content = f"{report_content}\n\n{disclaimer}"
         
+        # Determine generation method
+        generation_method = 'template' if (use_template or not self._client) else 'ai'
+        
         # Save report to database
         report_id = self._save_report(
             learner_id=learner_id,
@@ -139,7 +195,8 @@ End with: "Observational insights only. This is not a diagnostic assessment."
             session_id=session_id,
             audience=audience,
             content=report_content,
-            validation_status=validation_status
+            validation_status=validation_status,
+            generation_method=generation_method
         )
         
         # Phase 3.2: Validate report immediately after generation
@@ -247,15 +304,116 @@ End with: "Observational insights only. This is not a diagnostic assessment."
         if not self._client:
             raise ValueError("Gemini client not initialized")
         
+        # Ensure API key is configured before each call (re-configure to be safe)
+        if self.settings and self.settings.gemini_key:
+            genai.configure(api_key=self.settings.gemini_key)
+        
         # Combine system prompt and user prompt
         full_prompt = f"{self._system_prompt}\n\n{user_prompt}"
         
-        response = self._client.generate_content(full_prompt)
+        try:
+            response = self._client.generate_content(full_prompt)
+        except Exception as e:
+            error_str = str(e)
+            
+            # Handle API key errors
+            if "API_KEY" in error_str.upper() or "API key" in error_str or "API_KEY_INVALID" in error_str:
+                raise ValueError(
+                    f"Gemini API key error: {error_str}. "
+                    "Please verify GEMINI_KEY is correctly set in your .env file. "
+                    "Get your key from: https://aistudio.google.com/app/apikey"
+                )
+            
+            # Handle quota/billing errors
+            if "429" in error_str or "quota" in error_str.lower() or "limit: 0" in error_str:
+                raise ValueError(
+                    "Gemini API quota error (429). "
+                    "This usually means billing is not enabled on your Google Cloud account. "
+                    "Even free tier requires billing to be enabled. "
+                    "Enable billing at: https://console.cloud.google.com/billing"
+                )
+            
+            raise
         
         if not response.text:
             raise ValueError("Gemini returned empty response")
         
         return response.text.strip()
+    
+    def _generate_template_report(
+        self,
+        patterns: List[Dict],
+        trends: List[Dict],
+        audience: str
+    ) -> str:
+        """
+        Generate a template-based report without AI.
+        Used as fallback when Gemini API is not available (billing/quota issues).
+        
+        Args:
+            patterns: List of pattern dictionaries
+            trends: List of trend dictionaries
+            audience: 'parent' or 'teacher'
+            
+        Returns:
+            Template-based narrative report
+        """
+        lines = []
+        
+        # Opening based on audience
+        if audience == 'parent':
+            lines.append("This report describes learning patterns observed during activities with this learner.")
+        else:
+            lines.append("This report summarizes learning patterns observed across activities with this learner.")
+        
+        lines.append("")
+        
+        # Patterns section
+        if patterns:
+            lines.append("Observed Patterns:")
+            lines.append("")
+            
+            for pattern in patterns:
+                pattern_name = pattern.get('pattern_name', 'Learning pattern')
+                learning_impact = pattern.get('learning_impact', '')
+                support_focus = pattern.get('support_focus', '')
+                
+                lines.append(f"{pattern_name}")
+                if learning_impact:
+                    lines.append(f"  {learning_impact}")
+                if support_focus:
+                    lines.append(f"  {support_focus}")
+                lines.append("")
+        
+        # Trends section (if available)
+        if trends:
+            lines.append("Patterns Over Time:")
+            lines.append("")
+            
+            for trend in trends:
+                pattern_name = trend.get('pattern_name', 'Pattern')
+                trend_type = trend.get('trend_type', 'stable')
+                
+                if trend_type == 'stable':
+                    trend_desc = "This pattern has appeared consistently across recent activities, suggesting a stable learning rhythm."
+                elif trend_type == 'improving':
+                    trend_desc = "Across recent activities, this pattern is appearing less strongly, suggesting growing ease with the task demands."
+                elif trend_type == 'fluctuating':
+                    trend_desc = "This pattern has varied across activities, which is common as learners adapt to different tasks."
+                else:
+                    trend_desc = "This pattern has appeared across recent activities."
+                
+                lines.append(f"{pattern_name}: {trend_desc}")
+                lines.append("")
+        
+        # Closing
+        lines.append("These observations are part of the natural learning process and reflect the learner's developing skills.")
+        lines.append("")
+        
+        # Disclaimer
+        lines.append("Observational insights only. This is not a diagnostic assessment.")
+        
+        return "\n".join(lines)
     
     def _save_report(
         self,
@@ -264,7 +422,8 @@ End with: "Observational insights only. This is not a diagnostic assessment."
         session_id: Optional[UUID],
         audience: str,
         content: str,
-        validation_status: str
+        validation_status: str,
+        generation_method: str = 'ai'
     ) -> UUID:
         """Save generated report to database."""
         supabase = get_supabase_admin()
@@ -280,7 +439,7 @@ End with: "Observational insights only. This is not a diagnostic assessment."
             "source_session_id": str(session_id) if session_id else None,
             "audience": audience,
             "content": content,
-            "generation_method": "ai",
+            "generation_method": generation_method,
             "validation_status": validation_status,
         }
         
